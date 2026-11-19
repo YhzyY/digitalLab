@@ -1,525 +1,138 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>武汉数字孪生城市系统</title>
-<!-- 引入 ECharts -->
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-<!-- 引入 Three.js -->
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
-<style>
-  :root {
-    --cyan: #00ffff;
-    --blue: #0a4a8a;
-    --bg-dark: #020a17;
-    --panel-bg: rgba(4, 22, 50, 0.7);
-    --border-glow: 0 0 10px rgba(0, 255, 255, 0.4);
-    --text-main: #e0f2fe;
-    --text-sub: #7dd3fc;
-  }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { width: 100vw; height: 100vh; overflow: hidden; background: var(--bg-dark); font-family: "Microsoft YaHei", sans-serif; color: var(--text-main); }
-
-  /* 3D 画布容器 */
-  #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-
-  /* UI 层 (HUD) */
-  .ui-layer {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    z-index: 10; pointer-events: none; /* 让鼠标穿透UI去操作3D场景 */
-    display: flex; flex-direction: column; justify-content: space-between;
-    padding: 15px;
-    background: radial-gradient(circle, transparent 40%, rgba(0, 10, 30, 0.5) 100%);
-  }
-
-  /* 让面板可以交互 */
-  .panel { pointer-events: auto; }
-
-  /* 顶部导航栏 */
-  .header {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    height: 80px; width: 100%;
-  }
-  .header-left, .header-right {
-    width: 320px; display: flex; align-items: center; gap: 15px; font-size: 12px; color: var(--text-sub);
-  }
-  .header-right { justify-content: flex-end; text-align: right; }
-  
-  .header-center {
-    flex: 1; display: flex; flex-direction: column; align-items: center; position: relative;
-  }
-  .title-main {
-    font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #fff;
-    text-shadow: 0 0 15px var(--cyan), 0 0 30px var(--blue);
-    background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.2), transparent);
-    padding: 0 40px; border-bottom: 2px solid var(--cyan);
-    position: relative; top: -10px;
-  }
-  .nav-buttons { display: flex; gap: 15px; margin-top: 10px; }
-  .nav-btn {
-    background: rgba(0, 100, 255, 0.2); border: 1px solid #00aaff; color: #fff;
-    padding: 6px 20px; border-radius: 4px; font-size: 14px; cursor: pointer;
-    box-shadow: inset 0 0 10px rgba(0, 170, 255, 0.5); transition: 0.3s;
-  }
-  .nav-btn:hover, .nav-btn.active { background: rgba(0, 170, 255, 0.5); box-shadow: 0 0 15px #00aaff; }
-
-  /* 左右两侧内容区 */
-  .main-content { display: flex; justify-content: space-between; flex: 1; padding: 10px 0; }
-  .side-panel { width: 340px; display: flex; flex-direction: column; gap: 15px; }
-
-  /* 面板通用样式 */
-  .data-box {
-    background: var(--panel-bg); border: 1px solid rgba(0, 255, 255, 0.3);
-    border-radius: 4px; position: relative; padding: 10px;
-    box-shadow: inset 0 0 20px rgba(0, 50, 100, 0.5);
-  }
-  /* 面板四个角的科技感装饰 */
-  .data-box::before, .data-box::after {
-    content: ''; position: absolute; width: 10px; height: 10px; border: 2px solid var(--cyan);
-  }
-  .data-box::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
-  .data-box::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
-  
-  .box-title {
-    font-size: 13px; color: #fff; font-weight: bold; padding-left: 10px;
-    border-left: 3px solid var(--cyan); margin-bottom: 10px;
-  }
-
-  /* 图表容器 */
-  .chart { width: 100%; height: 140px; }
-  .chart-lg { height: 180px; }
-  
-  /* 监控影像模拟 */
-  .cam-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-  .cam-item {
-    height: 70px; background: #112233 url('https://picsum.photos/200/100?random=1') center/cover; 
-    border: 1px solid #335577; position: relative;
-  }
-  .cam-item::after {
-    content: '● REC'; position: absolute; top: 5px; right: 5px; color: red; font-size: 10px; font-weight: bold;
-  }
-
-  /* 底部进度条 */
-  .footer {
-    height: 40px; display: flex; justify-content: center; align-items: center; position: relative;
-  }
-  .progress-track {
-    width: 60%; height: 15px; background: rgba(0, 80, 150, 0.5);
-    border: 1px solid var(--cyan); border-radius: 10px; overflow: hidden;
-    position: relative; display: flex; align-items: center;
-  }
-  .progress-fill {
-    width: 40%; height: 100%; background: linear-gradient(90deg, #0055ff, #00ffff);
-    box-shadow: 0 0 10px var(--cyan);
-  }
-  .progress-arrow {
-    position: absolute; right: -20px; color: var(--cyan); font-size: 24px; font-weight: bold;
-  }
-
-</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数字孪生城市多源数据融合与智能态势感知虚拟仿真实验</title>
+<link rel="stylesheet" href="assets/style.css">
 </head>
-<body>
-
-<!-- Three.js 3D 城市场景 -->
-<div id="canvas-container"></div>
-
-<!-- HUD 数据大屏 -->
-<div class="ui-layer">
-  
-  <!-- 顶部 -->
-  <div class="header">
-    <div class="header-left">
-      <span style="color:var(--cyan);font-size:20px;">☼</span>
-      <span>武汉 多云 28°C</span>
-    </div>
-    <div class="header-center">
-      <div class="title-main">武汉数字孪生城市系统</div>
-      <div class="nav-buttons">
-        <div class="nav-btn active">交通检测</div>
-        <div class="nav-btn">消防检测</div>
-        <div class="nav-btn">城市概况</div>
-        <div class="nav-btn">安全检测</div>
-        <div class="nav-btn">产业分布</div>
-        <div class="nav-btn">医疗分布</div>
-      </div>
-    </div>
-    <div class="header-right">
-      <span>2024-05-28 16:43:14</span>
-    </div>
-  </div>
-
-  <!-- 主体内容 -->
-  <div class="main-content">
-    
-    <!-- 左侧面板 -->
-    <div class="side-panel">
-      <div class="data-box panel">
-        <div class="box-title">GDP总量 (万亿)</div>
-        <div class="chart" id="chart-gdp"></div>
-      </div>
-      <div class="data-box panel" style="flex:1;">
-        <div class="box-title">产业概况</div>
-        <div class="chart chart-lg" id="chart-industry"></div>
-      </div>
-      <div class="data-box panel">
-        <div class="box-title">交通概况</div>
-        <div class="chart" id="chart-traffic"></div>
-      </div>
-      <div class="data-box panel">
-        <div class="box-title">监控影像</div>
-        <div class="cam-grid">
-          <div class="cam-item"></div>
-          <div class="cam-item" style="background-image:url('https://picsum.photos/200/100?random=2')"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 右侧面板 -->
-    <div class="side-panel">
-      <div class="data-box panel" style="flex:1;">
-        <div class="box-title">消防概况</div>
-        <div class="chart chart-lg" id="chart-fire"></div>
-      </div>
-      <div class="data-box panel">
-        <div class="box-title">医疗概况</div>
-        <div class="chart" id="chart-medical"></div>
-      </div>
-      <div class="data-box panel">
-        <div class="box-title">疫情概况-高风险区域(人数)</div>
-        <div class="chart" id="chart-risk"></div>
-      </div>
-      <div class="data-box panel">
-        <div class="box-title">疫情概况-监控影像</div>
-        <div class="cam-grid">
-          <div class="cam-item" style="background-image:url('https://picsum.photos/200/100?random=3')"></div>
-          <div class="cam-item" style="background-image:url('https://picsum.photos/200/100?random=4')"></div>
-        </div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- 底部 -->
-  <div class="footer">
-    <div class="progress-track">
-      <div class="progress-fill"></div>
-      <div class="progress-arrow">»</div>
-    </div>
+<body class="landing">
+<canvas id="bg-canvas"></canvas>
+<div class="landing-wrap">
+  <div class="brand">Digital Twin City · 虚拟仿真实验教学项目</div>
+  <h1>数字孪生城市多源数据融合<br>与智能态势感知</h1>
+  <p class="sub">我们不只是城市服务的使用者，更是智慧城市的共建者。
+    实现城市数字化，并在虚拟城市中预演火警、交通拥堵与道路积水等场景，看数据如何让城市运行更安全、市民生活更便捷。
+  </p>
+  <div class="flow" id="flow"></div>
+  <div class="cta">
+    <button id="startBtn" class="btn btn-primary">开始实验</button>
+    <button id="resetBtn" class="btn btn-danger">重置进度</button>
   </div>
 </div>
 
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-/* ==========================================
-   1. 初始化 Three.js 3D 城市场景
-   ========================================== */
-const container = document.getElementById('canvas-container');
-const scene = new THREE.Scene();
-// 设置深蓝色雾效，模拟城市场景远景
-scene.fog = new THREE.FogExp2(0x020a17, 0.002);
-
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 2000);
-camera.position.set(-150, 120, 200);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.shadowMap.enabled = true;
-container.appendChild(renderer.domElement);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 20, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.05;
-controls.maxPolarAngle = Math.PI / 2.2;
-controls.autoRotate = true; // 自动缓慢旋转
-controls.autoRotateSpeed = 0.5;
-
-// 光照
-const ambientLight = new THREE.AmbientLight(0x404060, 1.5);
-scene.add(ambientLight);
-const dirLight = new THREE.DirectionalLight(0xaaccff, 2);
-dirLight.position.set(100, 200, 100);
-dirLight.castShadow = true;
-scene.add(dirLight);
-
-// 1.1 创建水面 / 地面
-const groundGeo = new THREE.PlaneGeometry(2000, 2000);
-const groundMat = new THREE.MeshStandardMaterial({ 
-  color: 0x061a30, roughness: 0.2, metalness: 0.8 
-});
-const ground = new THREE.Mesh(groundGeo, groundMat);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-
-// 1.2 生成程序化城市
-const buildingColors = [0x1a3b5c, 0x2a4b6c, 0x3a5b7c, 0x0a2b4c];
-const N = 20; // 网格大小
-const spacing = 18;
-
-for (let i = -N/2; i < N/2; i++) {
-  for (let j = -N/2; j < N/2; j++) {
-    // 留出中间空地做广场/地标
-    if (Math.abs(i) < 3 && Math.abs(j) < 3) continue;
-    // 随机生成空地
-    if (Math.random() > 0.8) continue;
-
-    const w = 6 + Math.random() * 6;
-    const d = 6 + Math.random() * 6;
-    const h = 15 + Math.random() * 60; // 建筑高度
-    
-    const geo = new THREE.BoxGeometry(w, h, d);
-    const mat = new THREE.MeshStandardMaterial({
-      color: buildingColors[Math.floor(Math.random() * buildingColors.length)],
-      roughness: 0.4,
-      metalness: 0.7,
-      emissive: 0x112244, // 微微发光模拟玻璃反光
-      emissiveIntensity: 0.5
-    });
-    
-    const mesh = new THREE.Mesh(geo, mat);
-    // 错落分布
-    mesh.position.set(i * spacing + (Math.random()-0.5)*5, h/2, j * spacing + (Math.random()-0.5)*5);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    scene.add(mesh);
+<script src="assets/common.js"></script>
+<script>
+/* ============ 背景粒子动画 ============ */
+(function(){
+  const cv = document.getElementById('bg-canvas');
+  const ctx = cv.getContext('2d');
+  let W, H, points = [];
+  function resize(){
+    W = cv.width = innerWidth * devicePixelRatio;
+    H = cv.height = innerHeight * devicePixelRatio;
+    cv.style.width = innerWidth + 'px';
+    cv.style.height = innerHeight + 'px';
   }
-}
+  resize();
+  addEventListener('resize', resize);
 
-// 1.3 添加标志性红色建筑 (类似图中的红色地标)
-const landmarkGeo = new THREE.CylinderGeometry(2, 12, 40, 8);
-const landmarkMat = new THREE.MeshStandardMaterial({ 
-  color: 0xcc2222, emissive: 0x550000, roughness: 0.3 
-});
-const landmark = new THREE.Mesh(landmarkGeo, landmarkMat);
-landmark.position.set(0, 20, 0);
-scene.add(landmark);
+  for(let i = 0; i < 140; i++){
+    points.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      vx: (Math.random() - .5) * 0.35 * devicePixelRatio,
+      vy: (Math.random() - .5) * 0.35 * devicePixelRatio,
+      r: (Math.random() * 1.6 + 0.6) * devicePixelRatio,
+      hue: Math.random() > .7 ? '139,92,246' : '0,212,255'
+    });
+  }
 
-// 1.4 添加绿色公园/绿化地带
-const parkMat = new THREE.MeshStandardMaterial({ color: 0x0a4a20, roughness: 0.9 });
-const parkGeo = new THREE.PlaneGeometry(80, 40);
-const park = new THREE.Mesh(parkGeo, parkMat);
-park.rotation.x = -Math.PI / 2;
-park.position.set(40, 0.1, 40);
-scene.add(park);
-
-// 1.5 添加点状星空/灯光点缀
-const starsGeo = new THREE.BufferGeometry();
-const starsCount = 1000;
-const posArray = new Float32Array(starsCount * 3);
-for(let i=0; i<starsCount*3; i+=3) {
-  posArray[i] = (Math.random() - 0.5) * 1500;
-  posArray[i+1] = Math.random() * 300;
-  posArray[i+2] = (Math.random() - 0.5) * 1500;
-}
-starsGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-const starsMat = new THREE.PointsMaterial({ size: 1, color: 0x00ffff, transparent: true, opacity: 0.4 });
-const stars = new THREE.Points(starsGeo, starsMat);
-scene.add(stars);
-
-// 动画循环
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  // 让星星轻微闪烁
-  stars.material.opacity = 0.3 + Math.sin(Date.now() * 0.002) * 0.2;
-  renderer.render(scene, camera);
-}
-animate();
-
-// 窗口大小适配
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-
-/* ==========================================
-   2. 初始化 ECharts 数据图表
-   ========================================== */
-// 通用颜色配置
-const colorCyan = '#00ffff';
-const colorPink = '#ff3366';
-const colorOrange = '#ffaa00';
-const colorBlue = '#3377ff';
-
-// 2.1 左侧：GDP总量 (柱状图)
-const gdpChart = echarts.init(document.getElementById('chart-gdp'));
-gdpChart.setOption({
-  grid: { top: 10, bottom: 20, left: 30, right: 10 },
-  xAxis: { 
-    type: 'category', 
-    data: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'],
-    axisLabel: { color: '#7dd3fc', fontSize: 10 },
-    axisLine: { lineStyle: { color: '#0a4a8a' } }
-  },
-  yAxis: { 
-    type: 'value',
-    axisLabel: { color: '#7dd3fc', fontSize: 10 },
-    splitLine: { lineStyle: { color: 'rgba(0, 255, 255, 0.1)' } }
-  },
-  series: [{
-    type: 'bar',
-    data: [45, 85, 40, 90, 60, 30, 70, 55, 80, 45, 90, 65],
-    itemStyle: {
-      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-        { offset: 0, color: colorPink },
-        { offset: 1, color: 'rgba(255, 51, 102, 0.1)' }
-      ]),
-      borderColor: colorPink,
-      borderWidth: 1
-    }
-  }]
-});
-
-// 2.2 左侧：产业概况 (饼图)
-const industryChart = echarts.init(document.getElementById('chart-industry'));
-industryChart.setOption({
-  tooltip: { trigger: 'item' },
-  legend: { bottom: '0%', left: 'center', textStyle: { color: '#7dd3fc', fontSize: 10 } },
-  series: [{
-    name: '产业概况', type: 'pie', radius: ['40%', '70%'],
-    center: ['50%', '45%'],
-    data: [
-      { value: 40, name: '私营企业', itemStyle: { color: colorPink } },
-      { value: 60, name: '国营企业', itemStyle: { color: colorCyan } },
-      { value: 30, name: '外资企业', itemStyle: { color: colorOrange } }
-    ],
-    label: { show: false },
-    emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 255, 255, 0.5)' } }
-  }]
-});
-
-// 2.3 左侧：交通概况 (仪表盘)
-const trafficChart = echarts.init(document.getElementById('chart-traffic'));
-trafficChart.setOption({
-  series: [{
-    type: 'gauge',
-    center: ['50%', '70%'], radius: '100%',
-    startAngle: 180, endAngle: 0,
-    min: 0, max: 100,
-    splitNumber: 5,
-    axisLine: {
-      lineStyle: {
-        width: 10,
-        color: [[0.5, colorPink], [0.8, colorOrange], [1, colorCyan]]
+  function draw(){
+    ctx.clearRect(0, 0, W, H);
+    /* 连线 */
+    for(let i = 0; i < points.length; i++){
+      const a = points[i];
+      for(let j = i + 1; j < points.length; j++){
+        const b = points[j];
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        const maxD = 150 * devicePixelRatio;
+        if(d < maxD){
+          ctx.strokeStyle = 'rgba(0,212,255,' + (0.16 * (1 - d / maxD)) + ')';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
       }
-    },
-    axisTick: { show: false },
-    splitLine: { show: false },
-    axisLabel: { show: false },
-    pointer: { length: '50%', width: 3, itemStyle: { color: colorPink } },
-    detail: { show: false },
-    data: [{ value: 50 }]
-  }]
-});
-
-// 2.4 右侧：消防概况 (环形图)
-const fireChart = echarts.init(document.getElementById('chart-fire'));
-fireChart.setOption({
-  tooltip: { trigger: 'item' },
-  legend: { 
-    orient: 'vertical', right: 0, top: 'center',
-    textStyle: { color: '#7dd3fc', fontSize: 10 },
-    itemWidth: 8, itemHeight: 8
-  },
-  series: [{
-    name: '消防概况', type: 'pie', radius: ['50%', '70%'],
-    center: ['35%', '50%'],
-    data: [
-      { value: 20, name: '已出警:20/件', itemStyle: { color: colorCyan } },
-      { value: 18, name: '待出警:18/件', itemStyle: { color: colorPink } },
-      { value: 12, name: '无效应事件:12/件', itemStyle: { color: colorOrange } },
-      { value: 122, name: '待建消防站:122/座', itemStyle: { color: colorBlue } }
-    ],
-    label: { show: false }
-  }]
-});
-
-// 2.5 右侧：医疗概况 (柱状图)
-const medicalChart = echarts.init(document.getElementById('chart-medical'));
-medicalChart.setOption({
-  grid: { top: 10, bottom: 20, left: 30, right: 10 },
-  xAxis: { 
-    type: 'category', data: ['医院', '床位', '医生'],
-    axisLabel: { color: '#7dd3fc', fontSize: 10 },
-    axisLine: { lineStyle: { color: '#0a4a8a' } }
-  },
-  yAxis: { 
-    type: 'value',
-    axisLabel: { show: false },
-    splitLine: { lineStyle: { color: 'rgba(0, 255, 255, 0.1)' } }
-  },
-  series: [{
-    type: 'bar',
-    data: [53, 65, 40],
-    barWidth: '40%',
-    itemStyle: { color: colorPink }
-  }]
-});
-
-// 2.6 右侧：疫情概况 (折线图)
-const riskChart = echarts.init(document.getElementById('chart-risk'));
-riskChart.setOption({
-  grid: { top: 20, bottom: 20, left: 30, right: 10 },
-  xAxis: { 
-    type: 'category', data: ['10/1', '10/2', '10/3', '10/4', '10/5', '10/6'],
-    axisLabel: { color: '#7dd3fc', fontSize: 10 },
-    axisLine: { lineStyle: { color: '#0a4a8a' } }
-  },
-  yAxis: { 
-    type: 'value',
-    axisLabel: { show: false },
-    splitLine: { lineStyle: { color: 'rgba(0, 255, 255, 0.1)' } }
-  },
-  series: [{
-    type: 'line',
-    data: [10, 25, 15, 40, 30, 45],
-    smooth: true,
-    symbol: 'circle',
-    symbolSize: 6,
-    itemStyle: { color: colorPink },
-    lineStyle: { color: colorPink, width: 2 },
-    areaStyle: {
-      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-        { offset: 0, color: 'rgba(255, 51, 102, 0.5)' },
-        { offset: 1, color: 'rgba(255, 51, 102, 0)' }
-      ])
     }
-  }]
-});
+    /* 点 */
+    points.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if(p.x < 0 || p.x > W) p.vx *= -1;
+      if(p.y < 0 || p.y > H) p.vy *= -1;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + p.hue + ',0.75)';
+      ctx.shadowBlur = 10 * devicePixelRatio;
+      ctx.shadowColor = 'rgba(' + p.hue + ',0.8)';
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
 
-// 图表随窗口自适应
-window.addEventListener('resize', () => {
-  gdpChart.resize();
-  industryChart.resize();
-  trafficChart.resize();
-  fireChart.resize();
-  medicalChart.resize();
-  riskChart.resize();
-});
+/* ============ 阶段卡片渲染 ============ */
+const FLOW = [
+  { n: 1, page: 'scene.html', title: '城市场景搭建', desc: '部署建筑与监测设施，建立对象与观测的空间关联，让城市在屏幕中"活"起来。' },
+  { n: 2, page: 'fusion.html', title: '多源数据融合', desc: '勾选数据源、配置时空对齐与质量选源规则，比较单源与多源方案差异。' },
+  { n: 3, page: 'situation.html', title: '智能态势感知', desc: '面向火警、交通拥堵与道路积水，设定阈值并研判态势，追溯判断依据。' },
+  { n: 4, page: 'report.html', title: '实验报告', desc: '汇总操作记录、运行结果与证据链，生成个人实验报告与能力评价。' }
+];
 
-// 导航按钮交互
-document.querySelectorAll('.nav-btn').forEach(btn => {
-  btn.addEventListener('click', function() {
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    this.classList.add('active');
+function renderFlow(){
+  const s = DC.load();
+  const done = { 1: s.scene.done, 2: s.fusion.done, 3: s.situation.done, 4: s.situation.done };
+  const host = document.getElementById('flow');
+  host.innerHTML = FLOW.map(f => `
+    <div class="flow-card ${done[f.n] ? 'done' : ''}" data-page="${f.page}">
+      <div class="fc-badge">${done[f.n] ? '已完成' : '待完成'}</div>
+      <div class="fc-num">STAGE 0${f.n}</div>
+      <div class="fc-title">${f.title}</div>
+      <div class="fc-desc">${f.desc}</div>
+    </div>
+  `).join('');
+  host.querySelectorAll('.flow-card').forEach(el => {
+    el.addEventListener('click', () => location.href = el.dataset.page);
   });
+}
+renderFlow();
+
+/* ============ 按钮 ============ */
+document.getElementById('startBtn').addEventListener('click', () => {
+  const s = DC.load();
+  if(!s.startedAt){
+    s.startedAt = new Date().toLocaleString('zh-CN');
+    DC.save(s);
+    DC.addEvidence(0, '开始实验', '进入孪生城市虚拟仿真实验环境');
+  }
+  if(!s.scene.done) location.href = 'scene.html';
+  else if(!s.fusion.done) location.href = 'fusion.html';
+  else if(!s.situation.done) location.href = 'situation.html';
+  else location.href = 'report.html';
 });
 
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if(confirm('确定要清空全部实验进度与记录吗？此操作不可撤销。')){
+    DC.reset();
+    renderFlow();
+    DC.toast('进度已重置', 'warn');
+  }
+});
 </script>
 </body>
 </html>

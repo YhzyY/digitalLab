@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>阶段二 · 多源数据融合</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <div id="header-host"></div>
+  <div class="main">
+    <div class="viewport" id="viewport">
+      <div class="overlay-tip">
+        <b>多源数据融合</b> · 勾选数据源并配置时空对齐与质量选源规则，执行融合计算
+      </div>
+      <div class="legend">
+        <span><i style="background:#00d4ff"></i>畅通 / 正常</span>
+        <span><i style="background:#ffb800"></i>缓行 / 关注</span>
+        <span><i style="background:#ff4d6d"></i>拥堵 / 告警</span>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="sb-head">
+        <div class="sb-title">阶段二 · 多源数据融合</div>
+      </div>
+      <div class="sb-body">
+        <div class="block">
+          <div class="block-title">① 选择数据源</div>
+          <div class="hint">至少勾选 2 个数据源参与融合；单源方案将作为对比基线。</div>
+          <div id="sourceList"></div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">② 时空对齐</div>
+          <div class="field">
+            <label>时间窗口</label>
+            <select id="selWindow">
+              <option value="1">1 分钟</option>
+              <option value="5" selected>5 分钟</option>
+              <option value="15">15 分钟</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>空间匹配方式</label>
+            <select id="selAlign">
+              <option value="nearest">最近邻匹配</option>
+              <option value="region">区域聚合</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">③ 质量选源规则</div>
+          <div class="field">
+            <label>最低质量阈值 <span class="val" id="qVal">60</span></label>
+            <input type="range" id="rngQuality" min="0" max="100" value="60" step="5">
+          </div>
+          <div class="hint">质量低于阈值的数据源将被剔除；来源与质量标记随结果保存。</div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">④ 执行融合</div>
+          <button class="btn btn-primary" id="btnRun" style="width:100%;margin-bottom:8px">执行融合计算</button>
+          <button class="btn btn-ghost btn-sm" id="btnCompare" style="width:100%" disabled>切换单源 / 多源对比</button>
+        </div>
+
+        <div class="block" id="resultBlock" style="display:none">
+          <div class="block-title">融合结果 <span class="badge" id="modeTag">多源</span></div>
+          <table class="dtable" id="resultTable"></table>
+        </div>
+      </div>
+      <div class="sb-foot">
+        <button class="btn btn-ghost" id="btnBack">← 上一步</button>
+        <button class="btn btn-primary" id="btnNext" disabled>进入态势感知 →</button>
+      </div>
+    </aside>
+  </div>
+  <div class="statusbar">
+    <span class="live">FUSION ENGINE RUNNING</span>
+    <span id="statText">等待配置…</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="assets/common.js"></script>
+<script>
+renderHeader(2);
+
+const state = DC.load();
+const city = createDigitalCity(document.getElementById('viewport'), { mode: 'city' });
+
+/* ---------- 模拟数据源 ---------- */
+const SOURCES = [
+  { id: 'speed', name: '车速观测', desc: '浮动车 / 雷达', quality: 82 },
+  { id: 'flow',  name: '流量观测', desc: '地磁线圈', quality: 74 },
+  { id: 'video', name: '视频计数', desc: '摄像机 CV', quality: 66 },
+  { id: 'level', name: '水位观测', desc: '超声波水位计', quality: 58 },
+  { id: 'wind',  name: '风速观测', desc: '气象站', quality: 88 }
+];
+
+/* 各路段在各数据源下的观测值（固定种子） */
+const ROADS = ['EW-01', 'NS-01', 'EW-02', 'NS-02'];
+const OBS = {
+  'EW-01': { speed: 46, flow: 58, video: 61, level: 2,  wind: 12 },
+  'NS-01': { speed: 18, flow: 92, video: 88, level: 3,  wind: 15 },
+  'EW-02': { speed: 52, flow: 44, video: 47, level: 18, wind: 9  },
+  'NS-02': { speed: 34, flow: 71, video: 69, level: 6,  wind: 11 }
+};
+
+/* 恢复配置 */
+let selected = state.fusion.sources.length ? state.fusion.sources.slice() : [];
+let minQuality = state.fusion.minQuality;
+let showSingle = false;
+
+/* 渲染数据源 */
+function renderSources(){
+  document.getElementById('sourceList').innerHTML = SOURCES.map(s => `
+    <div class="checkcard ${selected.includes(s.id) ? 'on' : ''}" data-id="${s.id}">
+      <div class="sw">✓</div>
+      <div>
+        <div>${s.name}</div>
+        <div style="font-size:11px;color:#4a6478">${s.desc}</div>
+      </div>
+      <div class="meta">Q${s.quality}</div>
+    </div>
+  `).join('');
+  document.querySelectorAll('#sourceList .checkcard').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.id;
+      if(selected.includes(id)) selected = selected.filter(x => x !== id);
+      else selected.push(id);
+      renderSources();
+      updateStatus();
+    });
+  });
+}
+renderSources();
+
+document.getElementById('rngQuality').addEventListener('input', e => {
+  minQuality = +e.target.value;
+  document.getElementById('qVal').textContent = minQuality;
+  updateStatus();
+});
+document.getElementById('selWindow').value = state.fusion.window;
+document.getElementById('selAlign').value = state.fusion.align;
+
+function updateStatus(){
+  document.getElementById('statText').textContent =
+    `已选数据源 ${selected.length} 个 · 质量阈值 ${minQuality}`;
+  document.getElementById('btnRun').disabled = selected.length < 2;
+}
+updateStatus();
+
+/* ---------- 融合计算 ---------- */
+function computeFusion(single){
+  const srcs = single ? [selected[0]] : selected;
+  const res = ROADS.map(rid => {
+    const valid = [];
+    srcs.forEach(sid => {
+      const q = SOURCES.find(s => s.id === sid).quality;
+      if(q >= minQuality) valid.push({ sid, q, v: OBS[rid][sid] });
+    });
+    if(!valid.length) return { rid, speed: null, flow: null, sources: [], quality: 0, status: 'unknown' };
+
+    const sumQ = valid.reduce((a, b) => a + b.q, 0);
+    /* 车速：取速度源，若无则按规则忽略；流量：优先 flow / video */
+    const speedSrc = valid.find(x => x.sid === 'speed');
+    const flowSrc = valid.find(x => x.sid === 'flow') || valid.find(x => x.sid === 'video');
+    const speed = speedSrc ? speedSrc.v : null;
+    const flow = flowSrc ? flowSrc.v : null;
+    const quality = Math.round(sumQ / valid.length);
+
+    let status = 'ok';
+    if(speed !== null && speed < 20) status = 'congested';
+    else if(speed !== null && speed < 30) status = 'slow';
+
+    return {
+      rid, speed, flow,
+      sources: valid.map(x => x.sid),
+      quality, status
+    };
+  });
+  return res;
+}
+
+/* 3D 渲染道路状态 */
+function paintRoads(results){
+  results.forEach(r => {
+    const color = r.status === 'congested' ? C.red
+                : r.status === 'slow' ? C.amber
+                : r.status === 'unknown' ? 0x334455
+                : C.cyan;
+    city.setRoadState(r.rid, color, r.status === 'congested' ? 1.4 : 0.8);
+  });
+}
+
+/* 渲染结果表 */
+function renderResult(results, single){
+  const modeTag = document.getElementById('modeTag');
+  modeTag.textContent = single ? '单源基线' : '多源融合';
+  modeTag.style.background = single ? 'rgba(255,184,0,.15)' : 'rgba(0,212,255,.12)';
+  modeTag.style.color = single ? '#ffb800' : '#00d4ff';
+
+  const rows = results.map(r => {
+    const st = r.status === 'congested' ? '<span class="bad">拥堵</span>'
+             : r.status === 'slow' ? '<span class="warn">缓行</span>'
+             : r.status === 'unknown' ? '<span style="color:#4a6478">未知</span>'
+             : '<span class="ok">畅通</span>';
+    return `<tr>
+      <td>${r.rid}</td>
+      <td>${r.speed ?? '—'}</td>
+      <td>${r.flow ?? '—'}</td>
+      <td>${r.quality}</td>
+      <td>${st}</td>
+      <td style="font-size:10px;color:#4a6478">${r.sources.join(',') || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('resultTable').innerHTML = `
+    <thead><tr><th>路段</th><th>车速</th><th>流量</th><th>Q</th><th>状态</th><th>来源</th></tr></thead>
+    <tbody>${rows}</tbody>`;
+
+  document.getElementById('resultBlock').style.display = 'block';
+}
+
+/* 执行按钮 */
+document.getElementById('btnRun').addEventListener('click', () => {
+  if(selected.length < 2){ DC.toast('请至少选择 2 个数据源', 'warn'); return; }
+  showSingle = false;
+
+  const results = computeFusion(false);
+  paintRoads(results);
+  renderResult(results, false);
+
+  state.fusion.sources = selected.slice();
+  state.fusion.minQuality = minQuality;
+  state.fusion.window = +document.getElementById('selWindow').value;
+  state.fusion.align = document.getElementById('selAlign').value;
+  state.fusion.results = results;
+  DC.save(state);
+
+  DC.addEvidence(2, '执行融合',
+    `数据源 [${selected.join(', ')}] · 时间窗 ${state.fusion.window}min · 阈值 Q${minQuality} · 路段 ${results.length} 条`);
+
+  document.getElementById('btnCompare').disabled = false;
+  document.getElementById('btnNext').disabled = false;
+  DC.toast('融合计算完成', 'ok');
+  document.getElementById('statText').textContent =
+    `融合完成 · ${results.filter(r => r.status === 'congested').length} 条拥堵 · ${results.filter(r => r.status === 'slow').length} 条缓行`;
+});
+
+/* 单源/多源对比 */
+document.getElementById('btnCompare').addEventListener('click', () => {
+  showSingle = !showSingle;
+  const results = computeFusion(showSingle);
+  paintRoads(results);
+  renderResult(results, showSingle);
+  DC.toast(showSingle ? '切换至单源基线' : '切换至多源融合', 'info');
+});
+
+/* 完成 */
+document.getElementById('btnNext').addEventListener('click', () => {
+  state.fusion.done = true;
+  state.stage = Math.max(state.stage, 2);
+  DC.save(state);
+  DC.addEvidence(2, '完成阶段', '多源数据融合配置完成，进入智能态势感知');
+  location.href = 'situation.html';
+});
+document.getElementById('btnBack').addEventListener('click', () => location.href = 'scene.html');
+</script>
+</body>
+</html>

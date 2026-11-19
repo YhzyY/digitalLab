@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>阶段一 · 城市场景搭建</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <div id="header-host"></div>
+  <div class="main">
+    <div class="viewport" id="viewport">
+      <div class="overlay-tip">
+        <b>对象建模</b> · 点击发光地块放置建筑或监测设施，建立对象与观测的空间关联
+      </div>
+      <div class="legend">
+        <span><i style="background:#00d4ff"></i>道路对象</span>
+        <span><i style="background:#00a8d6"></i>建筑对象</span>
+        <span><i style="background:#00ffa3"></i>监测设施</span>
+        <span><i style="background:#8b5cf6"></i>对象关联</span>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="sb-head">
+        <div class="sb-title">阶段一 · 城市场景搭建</div>
+      </div>
+      <div class="sb-body">
+        <div class="block">
+          <div class="block-title">任务目标 <span class="badge">3 步</span></div>
+          <div class="hint">
+            部署不少于 3 栋建筑、2 个监测设施，并至少建立 2 条「设施 → 对象」关联。完成后可进入数据融合阶段。
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">① 部署建筑</div>
+          <div class="hint">点击「放置建筑」，再在 3D 场景中点击发光地块。建筑是火警与设施监测的对象载体。</div>
+          <button class="btn btn-ghost btn-sm" id="btnBuilding" style="width:100%">放置建筑</button>
+          <div class="obj-list" id="bList" style="margin-top:10px"></div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">② 接入监测设施</div>
+          <div class="hint">点击「接入设施」，在剩余地块部署监测设备，用于后续采集交通、设施与水位观测。</div>
+          <button class="btn btn-ghost btn-sm" id="btnSensor" style="width:100%">接入设施</button>
+          <div class="obj-list" id="sList" style="margin-top:10px"></div>
+        </div>
+
+        <div class="block">
+          <div class="block-title">③ 建立对象关联</div>
+          <div class="hint">选择监测设施与被监测对象，建立空间关联；缺测时依据此关联判断对象状态。</div>
+          <div class="field">
+            <label>监测设施</label>
+            <select id="selSensor"><option value="">— 请选择 —</option></select>
+          </div>
+          <div class="field">
+            <label>被监测对象</label>
+            <select id="selTarget"><option value="">— 请选择 —</option></select>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="btnLink" style="width:100%">建立关联</button>
+          <div class="obj-list" id="lList" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="sb-foot">
+        <button class="btn btn-ghost" id="btnBack">返回首页</button>
+        <button class="btn btn-primary" id="btnNext" disabled>进入数据融合 →</button>
+      </div>
+    </aside>
+  </div>
+  <div class="statusbar">
+    <span class="live">SIMULATION ONLINE</span>
+    <span id="statText">场景加载中…</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="assets/common.js"></script>
+<script>
+renderHeader(1);
+
+const state = DC.load();
+if(!state.startedAt){
+  state.startedAt = new Date().toLocaleString('zh-CN');
+  DC.save(state);
+}
+/* 恢复已有数据 */
+let buildings = state.scene.buildings.slice();
+let sensors = state.scene.sensors.slice();
+let links = state.scene.links.slice();
+
+const city = createDigitalCity(document.getElementById('viewport'), { mode: 'build' });
+if(!city){
+  document.getElementById('statText').textContent = '场景引擎加载失败';
+} else {
+  document.getElementById('statText').textContent = '城市场景就绪 · 候选地块 8 个';
+  /* 恢复已有对象 */
+  buildings.forEach(b => city.addBuildingAt(b.plotId, { id: b.id, color: b.color }));
+  sensors.forEach(s => city.addSensorAt(s.plotId, { id: s.id }));
+  links.forEach(l => city.addLink(l.a, l.b));
+
+  setTimeout(() => {
+    /* 已有建筑/设施的 plotId 需要隐藏对应地块 */
+    [...buildings, ...sensors].forEach(o => {
+      const p = city.plots.find(p => p.userData.plotId === o.plotId);
+      if(p){ p.userData.used = true; p.visible = false; }
+    });
+  }, 100);
+}
+
+let activeMode = null;
+
+function refreshUI(){
+  /* 建筑列表 */
+  document.getElementById('bList').innerHTML = buildings.map(b => `
+    <div class="obj-item">
+      <span class="dot" style="background:#00a8d6"></span>
+      <span class="id">${b.id}</span>
+      <span class="name">${b.name}</span>
+      <span class="tag">${b.height}m</span>
+    </div>`).join('') || '<div class="hint" style="margin:0">暂无建筑</div>';
+
+  /* 设施列表 */
+  document.getElementById('sList').innerHTML = sensors.map(s => `
+    <div class="obj-item">
+      <span class="dot" style="background:#00ffa3"></span>
+      <span class="id">${s.id}</span>
+      <span class="name">${s.name}</span>
+      <span class="tag">${s.kind}</span>
+    </div>`).join('') || '<div class="hint" style="margin:0">暂无设施</div>';
+
+  /* 关联列表 */
+  document.getElementById('lList').innerHTML = links.map(l => `
+    <div class="obj-item">
+      <span class="dot" style="background:#8b5cf6"></span>
+      <span class="id">${l.from}</span>
+      <span class="name">→ ${l.to}</span>
+    </div>`).join('') || '<div class="hint" style="margin:0">暂无关联</div>';
+
+  /* 下拉 */
+  const selS = document.getElementById('selSensor');
+  selS.innerHTML = '<option value="">— 请选择 —</option>' +
+    sensors.map(s => `<option value="${s.id}">${s.id} · ${s.name}</option>`).join('');
+
+  const selT = document.getElementById('selTarget');
+  selT.innerHTML = '<option value="">— 请选择 —</option>' +
+    buildings.map(b => `<option value="${b.id}">${b.id} · ${b.name}（建筑）</option>`).join('') +
+    ['EW-01','NS-01','EW-02','NS-02'].map(r => `<option value="${r}">${r} · 道路对象</option>`).join('');
+
+  /* 完成度 */
+  const ok = buildings.length >= 3 && sensors.length >= 2 && links.length >= 2;
+  document.getElementById('btnNext').disabled = !ok;
+  document.getElementById('statText').textContent =
+    `建筑 ${buildings.length}/3 · 设施 ${sensors.length}/2 · 关联 ${links.length}/2`;
+}
+refreshUI();
+
+/* 模式切换 */
+document.getElementById('btnBuilding').addEventListener('click', function(){
+  activeMode = 'building';
+  this.textContent = '✓ 已激活 · 点击地块放置';
+  document.getElementById('btnSensor').textContent = '接入设施';
+  city.setAutoRotate(false);
+});
+document.getElementById('btnSensor').addEventListener('click', function(){
+  activeMode = 'sensor';
+  this.textContent = '✓ 已激活 · 点击地块放置';
+  document.getElementById('btnBuilding').textContent = '放置建筑';
+  city.setAutoRotate(false);
+});
+
+/* 点击场景 */
+if(city){
+  city.renderer.domElement.addEventListener('click', e => {
+    if(!activeMode) return;
+    const hits = city.pick(e.clientX, e.clientY);
+    if(!hits.length) return;
+    /* 向上找 plot */
+    let obj = hits[0].object;
+    while(obj && !(obj.userData && obj.userData.type === 'plot')) obj = obj.parent;
+    if(!obj) return;
+    if(obj.userData.used){ DC.toast('该地块已被占用', 'warn'); return; }
+
+    const plotId = obj.userData.plotId;
+
+    if(activeMode === 'building'){
+      const idx = buildings.length + 1;
+      const spec = {
+        plotId,
+        id: 'BLD-' + String(idx).padStart(2, '0'),
+        name: '建筑 ' + String(idx).padStart(2, '0'),
+        height: 0,
+        color: C.cyan
+      };
+      const b = city.addBuildingAt(plotId, { id: spec.id });
+      if(!b) return;
+      spec.height = Math.round(b.h);
+      buildings.push(spec);
+      DC.addEvidence(1, '部署建筑', `${spec.id} 落位于 ${plotId}，高度 ${spec.height}m`);
+      DC.toast('已部署 ' + spec.id, 'ok');
+    } else {
+      const idx = sensors.length + 1;
+      const kinds = ['视频监测', '环境监测', '水位监测', '交通雷达'];
+      const spec = {
+        plotId,
+        id: 'SEN-' + String(idx).padStart(2, '0'),
+        name: '设施 ' + String(idx).padStart(2, '0'),
+        kind: kinds[(idx - 1) % kinds.length]
+      };
+      city.addSensorAt(plotId, { id: spec.id });
+      sensors.push(spec);
+      DC.addEvidence(1, '接入设施', `${spec.id}（${spec.kind}）接入于 ${plotId}`);
+      DC.toast('已接入 ' + spec.id, 'ok');
+    }
+
+    activeMode = null;
+    document.getElementById('btnBuilding').textContent = '放置建筑';
+    document.getElementById('btnSensor').textContent = '接入设施';
+    city.setAutoRotate(true);
+
+    state.scene.buildings = buildings;
+    state.scene.sensors = sensors;
+    DC.save(state);
+    refreshUI();
+  });
+}
+
+/* 建立关联 */
+document.getElementById('btnLink').addEventListener('click', () => {
+  const sid = document.getElementById('selSensor').value;
+  const tid = document.getElementById('selTarget').value;
+  if(!sid || !tid){ DC.toast('请选择设施与对象', 'warn'); return; }
+  if(links.some(l => l.from === sid && l.to === tid)){ DC.toast('该关联已存在', 'warn'); return; }
+
+  const s = sensors.find(x => x.id === sid);
+  let target = buildings.find(b => b.id === tid);
+  if(!target){
+    const roadPos = { 'EW-01':[0,0], 'NS-01':[0,0], 'EW-02':[0,80], 'NS-02':[-80,0] };
+    const p = roadPos[tid] || [0,0];
+    target = { id: tid, name: '道路对象', x: p[0], z: p[1] };
+  }
+  const link = { from: sid, to: tid, a: { x: s.x, z: s.z }, b: { x: target.x || 0, z: target.z || 0 } };
+  city.addLink(link.a, link.b);
+  links.push(link);
+
+  DC.addEvidence(1, '建立关联', `${sid} → ${tid}（空间对象关联）`);
+  DC.toast('关联已建立', 'ok');
+
+  state.scene.links = links;
+  state.scene.buildings = buildings;
+  state.scene.sensors = sensors;
+  DC.save(state);
+  refreshUI();
+});
+
+/* 完成进入下一阶段 */
+document.getElementById('btnNext').addEventListener('click', () => {
+  state.scene.done = true;
+  state.stage = Math.max(state.stage, 1);
+  DC.save(state);
+  DC.addEvidence(1, '完成阶段', '城市对象建模完成，进入数据融合阶段');
+  location.href = 'fusion.html';
+});
+
+document.getElementById('btnBack').addEventListener('click', () => location.href = 'index.html');
+</script>
+</body>
+</html>
