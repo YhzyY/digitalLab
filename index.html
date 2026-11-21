@@ -1,138 +1,19 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>数字孪生城市多源数据融合与智能态势感知虚拟仿真实验</title>
-<link rel="stylesheet" href="assets/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#182f26">
+  <title>孪生城市虚拟仿真实验</title>
+  <link rel="stylesheet" href="lab.css">
+  <script src="assets/vendor/three.r186.min.js" defer></script>
+  <script src="city-simulation.js" defer></script>
+  <script src="city-view.js" defer></script>
+  <script src="experiment.js" defer></script>
+  <script src="lab.js" defer></script>
 </head>
-<body class="landing">
-<canvas id="bg-canvas"></canvas>
-<div class="landing-wrap">
-  <div class="brand">Digital Twin City · 虚拟仿真实验教学项目</div>
-  <h1>数字孪生城市多源数据融合<br>与智能态势感知</h1>
-  <p class="sub">我们不只是城市服务的使用者，更是智慧城市的共建者。
-    实现城市数字化，并在虚拟城市中预演火警、交通拥堵与道路积水等场景，看数据如何让城市运行更安全、市民生活更便捷。
-  </p>
-  <div class="flow" id="flow"></div>
-  <div class="cta">
-    <button id="startBtn" class="btn btn-primary">开始实验</button>
-    <button id="resetBtn" class="btn btn-danger">重置进度</button>
-  </div>
-</div>
-
-<script src="assets/common.js"></script>
-<script>
-/* ============ 背景粒子动画 ============ */
-(function(){
-  const cv = document.getElementById('bg-canvas');
-  const ctx = cv.getContext('2d');
-  let W, H, points = [];
-  function resize(){
-    W = cv.width = innerWidth * devicePixelRatio;
-    H = cv.height = innerHeight * devicePixelRatio;
-    cv.style.width = innerWidth + 'px';
-    cv.style.height = innerHeight + 'px';
-  }
-  resize();
-  addEventListener('resize', resize);
-
-  for(let i = 0; i < 140; i++){
-    points.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      vx: (Math.random() - .5) * 0.35 * devicePixelRatio,
-      vy: (Math.random() - .5) * 0.35 * devicePixelRatio,
-      r: (Math.random() * 1.6 + 0.6) * devicePixelRatio,
-      hue: Math.random() > .7 ? '139,92,246' : '0,212,255'
-    });
-  }
-
-  function draw(){
-    ctx.clearRect(0, 0, W, H);
-    /* 连线 */
-    for(let i = 0; i < points.length; i++){
-      const a = points[i];
-      for(let j = i + 1; j < points.length; j++){
-        const b = points[j];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        const maxD = 150 * devicePixelRatio;
-        if(d < maxD){
-          ctx.strokeStyle = 'rgba(0,212,255,' + (0.16 * (1 - d / maxD)) + ')';
-          ctx.lineWidth = 0.7;
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.stroke();
-        }
-      }
-    }
-    /* 点 */
-    points.forEach(p => {
-      p.x += p.vx; p.y += p.vy;
-      if(p.x < 0 || p.x > W) p.vx *= -1;
-      if(p.y < 0 || p.y > H) p.vy *= -1;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(' + p.hue + ',0.75)';
-      ctx.shadowBlur = 10 * devicePixelRatio;
-      ctx.shadowColor = 'rgba(' + p.hue + ',0.8)';
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    });
-    requestAnimationFrame(draw);
-  }
-  draw();
-})();
-
-/* ============ 阶段卡片渲染 ============ */
-const FLOW = [
-  { n: 1, page: 'scene.html', title: '城市场景搭建', desc: '部署建筑与监测设施，建立对象与观测的空间关联，让城市在屏幕中"活"起来。' },
-  { n: 2, page: 'fusion.html', title: '多源数据融合', desc: '勾选数据源、配置时空对齐与质量选源规则，比较单源与多源方案差异。' },
-  { n: 3, page: 'situation.html', title: '智能态势感知', desc: '面向火警、交通拥堵与道路积水，设定阈值并研判态势，追溯判断依据。' },
-  { n: 4, page: 'report.html', title: '实验报告', desc: '汇总操作记录、运行结果与证据链，生成个人实验报告与能力评价。' }
-];
-
-function renderFlow(){
-  const s = DC.load();
-  const done = { 1: s.scene.done, 2: s.fusion.done, 3: s.situation.done, 4: s.situation.done };
-  const host = document.getElementById('flow');
-  host.innerHTML = FLOW.map(f => `
-    <div class="flow-card ${done[f.n] ? 'done' : ''}" data-page="${f.page}">
-      <div class="fc-badge">${done[f.n] ? '已完成' : '待完成'}</div>
-      <div class="fc-num">STAGE 0${f.n}</div>
-      <div class="fc-title">${f.title}</div>
-      <div class="fc-desc">${f.desc}</div>
-    </div>
-  `).join('');
-  host.querySelectorAll('.flow-card').forEach(el => {
-    el.addEventListener('click', () => location.href = el.dataset.page);
-  });
-}
-renderFlow();
-
-/* ============ 按钮 ============ */
-document.getElementById('startBtn').addEventListener('click', () => {
-  const s = DC.load();
-  if(!s.startedAt){
-    s.startedAt = new Date().toLocaleString('zh-CN');
-    DC.save(s);
-    DC.addEvidence(0, '开始实验', '进入孪生城市虚拟仿真实验环境');
-  }
-  if(!s.scene.done) location.href = 'scene.html';
-  else if(!s.fusion.done) location.href = 'fusion.html';
-  else if(!s.situation.done) location.href = 'situation.html';
-  else location.href = 'report.html';
-});
-
-document.getElementById('resetBtn').addEventListener('click', () => {
-  if(confirm('确定要清空全部实验进度与记录吗？此操作不可撤销。')){
-    DC.reset();
-    renderFlow();
-    DC.toast('进度已重置', 'warn');
-  }
-});
-</script>
+<body>
+  <div id="app">正在打开实验…</div>
 </body>
 </html>
