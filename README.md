@@ -14,6 +14,16 @@
 
 ## 本地原型与正式接入
 
-街区、观测和视频轨迹均为虚拟教学样例。带 `?token=标识` 的链接可以在同一浏览器区分本地进度。该静态入口用于演示，正式的 Token 验证和远程进度需联调。
+街区、观测和视频轨迹均为虚拟教学样例。直接打开 HTML 时使用浏览器本机进度。测试实验空间接口时，用 Node.js 20 或更新版本在项目目录启动本地服务，无需安装依赖：
+
+```sh
+node local-server.cjs
+```
+
+首页为 `http://127.0.0.1:4173/`。进入 [实验空间测试对接页面](https://shenbao.ilab-x.com/declare/wiki/v2#2-1)，按页面说明登录公开测试账号，从公测课程页点击「我要做实验」，将跳转地址填写为 `http://127.0.0.1:4173/entry`。在运行本地服务的电脑浏览器打开实验空间产生的带 `ticket` 链接，网页会自动识别学生并恢复本地服务记录。
+
+完成第 20 步后，可提交成绩、查询回传结果，以及在成绩成功后上传 PDF 报告。成绩默认用于联调，按实际完成的步骤每步 5 分，合理用时暂设 60 秒。规则判定与合成轨迹按零次 AI 调用回传。报告最多 5 MB，当前页面仍提供 JSON 导出。
+
+本地服务默认使用官方公开测试配置。自定义对接时同时设置 `ILAB_API_BASE`、`ILAB_APPID`、`ILAB_SECRET`，按需设置 `ILAB_TITLE`。可用 `PORT` 更换监听端口，用 `ILAB_STATE_FILE` 指定状态文件。macOS 默认将进度和接口凭证持久化到 `~/Library/Application Support/digital-city-ilab/state.json`。运行 `node --test scripts/ilab.test.cjs` 可验证签名、请求参数和提交结构。
 
 场景由 [scripts/build-scene.py](scripts/build-scene.py) 生成。只有重新制作街区时才需要 Python 和 Pillow。[建筑立面贴图](assets/facade-atlas.webp)由内置图像生成工具制作，生成提示为四种正立面纹理的 2×2 图集，包括浅色石材住宅、蓝灰办公玻璃、暖砖住宅和灰色混凝土办公楼。采用正视、均匀自然光和可重复贴图构图。Three.js 的发布版本及许可见 [r186](https://github.com/mrdoob/three.js/releases/tag/r186) 和 [MIT 许可](assets/vendor/THREE-LICENSE.txt)。

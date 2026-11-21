@@ -6,6 +6,85 @@ let storageKey;
 let session = { answers: [], choices: {}, active: {}, minute: 0 };
 let saved = true;
 let city;
+let remote;
+let pending = [];
+let syncing;
+let syncError = '';
+let ilabMessage = '';
+let stepClock;
+
+async function ilabRequest(path, options) {
+  const response = await fetch('/api/ilab/' + path, options);
+  const data = await response.json();
+  if (!response.ok) {
+    if (data.attempt?.originId === remote?.originId && data.attempt?.submission) remote = data.attempt;
+    throw new Error(data.error || '实验空间操作失败。');
+  }
+  return data;
+}
+
+function savePending() {
+  try { localStorage.setItem(storageKey, JSON.stringify(pending)); }
+  catch { /* 云端保存继续运行。 */ }
+}
+
+function syncLabel() {
+  if (remote) return syncError || (pending.length ? '正在保存本地服务进度' : '已保存到本地服务');
+  return saved ? '本机自动保存' : '浏览器未能保存进度';
+}
+
+async function uploadPending() {
+  syncError = '';
+  while (pending.length) {
+    const entry = pending[0];
+    entry.revision ??= remote.revision;
+    savePending();
+    try {
+      const { attempt } = await ilabRequest('progress?originId=' + remote.originId, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry),
+      });
+      remote = attempt;
+    } catch (error) {
+      syncError = error.message;
+      break;
+    }
+    pending.shift();
+    savePending();
+  }
+  const status = root.querySelector('[data-ilab-save]');
+  if (status) status.textContent = syncLabel();
+  const retry = root.querySelector('#retry-save');
+  if (retry) retry.hidden = !syncError;
+  return !pending.length;
+}
+
+function flush() {
+  syncing ??= uploadPending().finally(() => { syncing = undefined; });
+  return syncing;
+}
+
+async function ilabAction(operation, file) {
+  try {
+    if (!await flush()) throw new Error(syncError || '请先保存进度。');
+    const parameters = new URLSearchParams({ originId: remote.originId });
+    if (file) parameters.set('filename', file.name);
+    const query = parameters.toString();
+    if (operation === 'result') {
+      const reply = await ilabRequest(operation + '?' + query);
+      ilabMessage = reply.found ? '实验空间已查到记录，成绩 ' + reply.score + ' 分，步骤 ' + reply.steps + ' 条。'
+        : '实验空间暂未查到本次实验结果。';
+    } else {
+      const { attempt } = await ilabRequest(operation + '?' + query, {
+        method: 'POST', body: file,
+      });
+      remote = attempt;
+      ilabMessage = operation === 'submit' ? '实验成绩已回传。' : 'PDF 实验报告已上传。';
+    }
+  } catch (error) {
+    ilabMessage = error.message;
+  }
+  render();
+}
 
 function restore() {
   try {
@@ -24,7 +103,14 @@ function restore() {
     };
   } catch { saved = false; }
 }
-function save() {
+function save(action) {
+  if (remote) {
+    if (remote.submission) return;
+    pending.push({ operationId: crypto.randomUUID(), draft: JSON.parse(JSON.stringify(session)), action });
+    savePending();
+    void flush();
+    return;
+  }
   try { localStorage.setItem(storageKey, JSON.stringify(session)); saved = true; }
   catch { saved = false; }
 }
@@ -39,12 +125,13 @@ function countComplete(module) {
 function moduleLink(module) { return '#' + module.id; }
 
 function renderHome() {
-  root.innerHTML = `<header class="header"><div class="container topbar"><a href="#home" class="brand"><span>城</span>孪生城市实验室</a><a href="#modules">实验模块 ↓</a></div></header>
+  stepClock = undefined;
+  root.innerHTML = `<header class="header"><div class="container topbar"><a href="#home" class="brand"><span>城</span>数字孪生城市实验室</a><a href="#modules">实验模块 ↓</a></div></header>
   <main class="container">
-    <section class="hero"><div class="hero-copy"><h1>孪生城市<br>虚拟仿真实验</h1>
+    <section class="hero"><div class="hero-copy"><h1>数字孪生城市<br>虚拟仿真实验</h1>
     <p>从一片空白场景开始，逐步建起城市，接入多源观测并验证火警、拥堵和积水状态。</p><a class="button light" href="#modules">查看实验模块 ↓</a></div>
     <figure class="hero-preview"><img src="assets/city.webp" width="1360" height="870" alt="带建筑纹理、绿化和道路标线的教学街区俯视图"><figcaption>搭建完成后的样例街区</figcaption></figure></section>
-    <section id="modules" class="modules"><div class="section-title"><h2>实验模块</h2><div class="module-actions"><p>共 20 步 · 同一浏览器自动恢复实验进度</p>
+    <section id="modules" class="modules"><div class="section-title"><h2>实验模块</h2><div class="module-actions"><p>共 20 步 · ${remote ? '已接入实验空间，进度保存在本地服务' : '同一浏览器自动恢复实验进度'}</p>
     ${session.answers.length ? '<button type="button" id="restart">从空场景重做</button>' : ''}</div></div>
     <div class="cards">${modules.map(module => {
       const count = countComplete(module), total = module.end - module.start + 1;
@@ -56,8 +143,17 @@ function renderHome() {
   city ??= createCityView();
   root.querySelector('.hero-preview').prepend(city.root);
   city.update({ ...showcase, lines: [], markers: [] }, null, 'preview');
-  root.querySelector('#restart')?.addEventListener('click', () => {
-    if (!confirm('重新开始会清除本机的实验进度。是否继续？')) return;
+  root.querySelector('#restart')?.addEventListener('click', async () => {
+    if (!confirm(remote ? '重新开始会创建新的实验记录。是否继续？' : '重新开始会清除本机的实验进度。是否继续？')) return;
+    if (remote) {
+      try {
+        if (!await flush()) throw new Error(syncError);
+        const { attempt } = await ilabRequest('restart?originId=' + remote.originId, { method: 'POST' });
+        remote = attempt;
+        storageKey = 'city-ilab:pending:' + attempt.originId;
+        ilabMessage = '';
+      } catch (error) { alert(error.message); return; }
+    }
     session = { answers: [], choices: {}, active: {}, minute: 0 };
     save();
     location.hash = modules[0].id;
@@ -89,6 +185,7 @@ function renderTraining(module, message = '') {
   const active = session.active[module.id];
   const canView = number => Number.isInteger(number) && number >= module.start && number <= module.end && number <= progress + 1;
   const number = canView(active) ? active : Math.min(module.end, Math.max(module.start, progress + 1));
+  if (!blocked && stepClock?.step !== number) stepClock = { step: number, startedAt: Date.now() };
   const step = steps[number - 1];
   const stage = blocked ? progress : Math.min(progress, number);
   const view = session.answers.slice(0, stage);
@@ -100,13 +197,16 @@ function renderTraining(module, message = '') {
   const nextModule = modules.find(item => nextNumber >= item.start && nextNumber <= item.end);
   const waitModule = modules.find(item => progress + 1 >= item.start && progress + 1 <= item.end);
   const currentSteps = steps.slice(module.start - 1, module.end);
-  const selectMarkup = step.single ? `<div class="selected-input">${step.options[0][1]}</div>` : `<select id="choice">
+  const locked = Boolean(remote?.submission);
+  const delivered = remote?.submission?.status === 'complete';
+  const selectMarkup = step.single ? `<div class="selected-input">${step.options[0][1]}</div>` : `<select id="choice"${locked ? ' disabled' : ''}>
     <option value="" disabled${chosen ? '' : ' selected'}>请选择</option>
     ${step.options.map(([id, label]) => `<option value="${id}"${chosen === id ? ' selected' : ''}>${label}</option>`).join('')}
     </select>`;
   root.innerHTML = `<header class="header training"><div class="container topbar">
     <a href="#home">← 返回首页</a><h1>${module.name}</h1>
-    <span class="save" role="status">${saved ? '本机自动保存' : '浏览器未能保存进度'}</span></div></header>
+    <span class="save" role="status" data-ilab-save>${remote ? '' : syncLabel()}</span>
+    ${remote ? '<button type="button" id="retry-save" hidden>重试保存</button>' : ''}</div></header>
   <main class="container workspace">
     <section class="map" aria-label="三维仿真场景">
       <div class="map-head"><strong>教学样例街区</strong><span data-testid="stage">场景阶段 ${stage} / ${steps.length}</span></div>
@@ -123,7 +223,7 @@ function renderTraining(module, message = '') {
         `<div class="control-group">
           <label${step.single ? '' : ' for="choice"'}>${step.label}</label>
           ${selectMarkup}
-          <button class="button" id="apply" type="button"${!chosen ? ' disabled' : ''}>${dirty ? '重新应用并更新场景' : '应用并更新场景'}</button>
+          <button class="button" id="apply" type="button"${!chosen || locked ? ' disabled' : ''}>${dirty ? '重新应用并更新场景' : '应用并更新场景'}</button>
           <p class="notice" role="status">${message || (dirty ? '参数草稿已修改。应用后更新场景。' : '')}</p>
         </div>
         <div class="control-group evidence-panel" id="evidence">
@@ -131,6 +231,12 @@ function renderTraining(module, message = '') {
           <p class="evidence">${output.detail}</p>
           ${done && nextModule ? `<button type="button" class="button secondary" id="next">下一步 →</button>` : ''}
           ${done && number === steps.length ? '<button type="button" class="button secondary" id="export">导出实验结果</button>' : ''}
+          ${remote && done && number === steps.length ? `<div class="control-group">
+            ${delivered ? '<strong>成绩已回传实验空间</strong>' : '<button type="button" class="button" id="ilab-submit">' + (locked ? '重试回传' : '提交到实验空间') + '</button>'}
+            <button type="button" class="button secondary" id="ilab-result">查询回传结果</button>
+            ${delivered && !remote.report ? '<label for="ilab-pdf">实验报告（PDF，可选）</label><input type="file" id="ilab-pdf" accept=".pdf,application/pdf"><button type="button" class="button secondary" id="ilab-report">上传报告</button>' : ''}
+            ${remote.report ? '<p>PDF 实验报告已上传</p>' : ''}
+            <p id="ilab-feedback" role="status"></p></div>` : ''}
         </div>`}
       <nav class="step-nav" aria-label="本模块步骤">${currentSteps.map(item =>
         `<button type="button" data-step="${item.number}"${canView(item.number) ? '' : ' disabled'}${item.number === number ? ' aria-current="step"' : ''}>
@@ -143,6 +249,29 @@ function renderTraining(module, message = '') {
   const streetTarget = !blocked && number === 6 ? (chosen === 'b' ? 'b' : 'a') : null;
   city.update(visual(view, session.minute),
     () => root.querySelector('#evidence')?.scrollIntoView({ block: 'nearest' }), 'training', streetTarget);
+  if (remote) {
+    root.querySelector('[data-ilab-save]').textContent = syncLabel();
+    const retry = root.querySelector('#retry-save');
+    retry.hidden = !syncError;
+    retry.addEventListener('click', () => void flush());
+    const feedback = root.querySelector('#ilab-feedback');
+    if (feedback) feedback.textContent = ilabMessage;
+    function bindAction(id, action, getFile) {
+      root.querySelector(id)?.addEventListener('click', event => {
+        const file = getFile?.();
+        if (getFile && !file) {
+          feedback.textContent = '请先选择 PDF 实验报告。';
+          return;
+        }
+        event.currentTarget.disabled = true;
+        feedback.textContent = '正在处理…';
+        void ilabAction(action, file);
+      });
+    }
+    bindAction('#ilab-submit', 'submit');
+    bindAction('#ilab-result', 'result');
+    bindAction('#ilab-report', 'report', () => root.querySelector('#ilab-pdf').files[0]);
+  }
   root.querySelector('#choice')?.addEventListener('change', event => {
     session.choices[number] = event.target.value;
     session.active[module.id] = number;
@@ -158,7 +287,8 @@ function renderTraining(module, message = '') {
     }
     session.answers[number - 1] = chosen;
     session.active[module.id] = number;
-    save();
+    save(stepClock);
+    stepClock = { step: number, startedAt: Date.now() };
     render('已应用。查看三维场景中的变化。');
     root.querySelector('#apply')?.focus();
   });
@@ -193,26 +323,45 @@ function render(message) {
 async function start() {
   const query = new URLSearchParams(location.search);
   const token = query.get('token');
-  let identity = query.get('demo') === '1' ? 'demo' : '';
-  if (token) {
-    const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-    identity = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+  if (location.protocol !== 'file:') {
+    const connected = await ilabRequest('session').catch(() => null);
+    if (connected?.attempt) {
+      remote = connected.attempt;
+      storageKey = 'city-ilab:pending:' + remote.originId;
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        if (!remote.submission && Array.isArray(stored)) pending = stored;
+      } catch { /* 以服务端记录恢复。 */ }
+      session = pending.at(-1)?.draft || remote.draft;
+      window.addEventListener('online', () => void flush());
+    }
   }
-  try {
-    if (identity) sessionStorage.setItem('city-lab-identity', identity);
-    else identity = sessionStorage.getItem('city-lab-identity');
-  } catch { /* Some browsers disallow storage for local files. */ }
-  identity ||= 'demo';
-  storageKey = 'city-lab:v2:' + identity;
-  if (token) {
-    try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* local file */ }
+  if (query.has('ticket') && !remote) {
+    root.textContent = '请启动 Node.js 本地服务，再从实验空间进入。';
+    return;
   }
-  restore();
+  if (!remote) {
+    let identity = query.get('demo') === '1' ? 'demo' : '';
+    if (token) {
+      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+      identity = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    try {
+      if (identity) sessionStorage.setItem('city-lab-identity', identity);
+      else identity = sessionStorage.getItem('city-lab-identity');
+    } catch { /* Some browsers disallow storage for local files. */ }
+    storageKey = 'city-lab:v2:' + (identity || 'demo');
+    if (token) {
+      try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* local file */ }
+    }
+    restore();
+  }
   window.addEventListener('hashchange', () => {
     render();
     if (location.hash !== '#modules') window.scrollTo(0, 0);
   });
   render();
+  if (remote && pending.length) void flush();
 }
 start().catch(() => {
   root.textContent = '无法打开实验。请通过本地文件或 HTTPS 地址访问。';
