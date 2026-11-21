@@ -19,13 +19,22 @@ globalThis.createCityView = function createCityView() {
   const error = root.querySelector('.city-error');
   const control = root.querySelector('#simulation-control');
   const initialPose = { azimuth: .57, elevation: .57, zoom: 1, street: false };
-  let pose = { ...initialPose };
+  const initialPreviewPose = { ...initialPose, elevation: .69 };
+  const streetViews = {
+    a: { azimuth: 1.49, focusX: -36, focusZ: 0 },
+    b: { azimuth: Math.PI - .08, focusX: 0, focusZ: -53 },
+  };
+  const pose = { ...initialPose };
+  const previewPose = { ...initialPreviewPose };
   let visual = { layers: [], lines: [], markers: [] };
   let onPick;
   let drag;
   let frame = 0;
   let previousFrame = 0;
   let playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let previewPlaying = playing;
+  let preview = false;
+  let streetTarget = null;
   let renderer, scene, camera, grid, worldLines, simulation, cityContext;
   const layers = new Map();
   const visibleLayers = new Map();
@@ -98,15 +107,6 @@ globalThis.createCityView = function createCityView() {
       strip.rotation.x = -Math.PI / 2;
       strip.position.set(x, .014, z);
       group.add(strip);
-    }
-    const neighbors = ['#8b9090', '#959b95', '#aaa79d'].map(color => new THREE.MeshLambertMaterial({ color }));
-    for (let index = 0; index < 24; index++) {
-      const lateral = -280 + index % 8 * 82;
-      const distance = 255 + Math.floor(index / 8) * 98;
-      const height = 14 + (index * 13 % 28);
-      const block = new THREE.Mesh(new THREE.BoxGeometry(28 + index % 4 * 7, height, 26), neighbors[index % 3]);
-      block.position.set(lateral, height / 2, -distance);
-      group.add(block);
     }
     return group;
   }
@@ -212,7 +212,7 @@ globalThis.createCityView = function createCityView() {
         continue;
       }
       const previous = visibleLayers.get(name) || 0;
-      const progress = playing ? Math.min(1, previous + delta * (name === 'buildings' ? 1.45 : 2.75)) : 1;
+      const progress = playing && !preview ? Math.min(1, previous + delta * (name === 'buildings' ? 1.45 : 2.75)) : 1;
       visibleLayers.set(name, progress);
       group.visible = true;
       const eased = 1 - (1 - progress) ** 3;
@@ -241,19 +241,24 @@ globalThis.createCityView = function createCityView() {
       overlay.width = expectedWidth;
       overlay.height = expectedHeight;
     }
-    const zoom = (pose.street ? 95 : 640 * Math.max(1, 1.3 * height / width)) / pose.zoom;
-    const flat = Math.cos(pose.elevation);
-    const focusX = pose.street ? -36 : 0;
-    const focusY = pose.street ? 5 : 12;
-    camera.position.set(focusX - Math.sin(pose.azimuth) * flat * zoom,
-      focusY + Math.sin(pose.elevation) * zoom, Math.cos(pose.azimuth) * flat * zoom);
-    camera.lookAt(focusX, focusY, 0);
+    const previewAnimating = preview && previewPlaying && root.dataset.modelReady === 'true';
+    if (previewAnimating && !drag) previewPose.azimuth += delta * .17;
+    const view = preview ? previewPose : pose;
+    const distance = (view.street ? 95 : (preview ? 720 : 640) * Math.max(1, 1.3 * height / width)) / view.zoom;
+    const flat = Math.cos(view.elevation);
+    const focusX = view.street ? view.focusX : 0;
+    const focusY = view.street ? 5 : 12;
+    const focusZ = view.street ? view.focusZ : 0;
+    camera.position.set(focusX - Math.sin(view.azimuth) * flat * distance,
+      focusY + Math.sin(view.elevation) * distance, focusZ + Math.cos(view.azimuth) * flat * distance);
+    camera.lookAt(focusX, focusY, focusZ);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    scene.fog.near = pose.street ? 220 : Math.max(260, zoom * 1.13);
-    scene.fog.far = scene.fog.near + (pose.street ? 560 : 470);
+    scene.fog.near = preview ? 1100 : view.street ? 220 : Math.max(260, distance * 1.13);
+    scene.fog.far = scene.fog.near + (view.street ? 560 : 470);
     updateLines();
-    cityContext.visible = visual.stage >= 4;
+    cityContext.visible = !preview && visual.stage >= 4;
+    scene.fog.color.copy(scene.background.set(preview ? '#dce5dc' : '#a9c4d3'));
     const constructing = applyLayers(delta);
     const live = simulation.update(visual.simulation, playing ? delta : 0, !playing);
     root.dataset.vehicles = String(live.vehicles);
@@ -263,8 +268,9 @@ globalThis.createCityView = function createCityView() {
     root.dataset.transmitting = String(live.transmitting);
     root.dataset.smoke = String(live.smoke);
     root.dataset.cameraType = 'perspective';
+    root.dataset.camera = [view.azimuth, view.elevation, view.zoom].map(value => value.toFixed(3)).join(',');
     renderer.render(scene, camera);
-    if (playing && (constructing || live.animated)) requestDraw();
+    if (previewAnimating || (!preview && playing && (constructing || live.animated))) requestDraw();
 
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
@@ -319,11 +325,13 @@ globalThis.createCityView = function createCityView() {
   }
 
   function adjust(direction) {
-    if (direction === 'home') pose = { ...initialPose };
-    if (direction === 'street') pose = { azimuth: 1.42, elevation: .10, zoom: 1, street: true };
-    if (direction === 'in') pose.zoom = Math.min(5.3, pose.zoom * 1.18);
-    if (direction === 'out') pose.zoom = Math.max(.48, pose.zoom / 1.18);
-    root.dataset.camera = [pose.azimuth, pose.elevation, pose.zoom].map(value => value.toFixed(2)).join(',');
+    const view = preview ? previewPose : pose;
+    if (direction === 'home') Object.assign(view, preview ? initialPreviewPose : initialPose);
+    if (direction === 'street' && !preview) {
+      Object.assign(view, streetViews[streetTarget || 'a'], { elevation: .10, zoom: 1, street: true });
+    }
+    if (direction === 'in') view.zoom = Math.min(5.3, view.zoom * 1.18);
+    if (direction === 'out') view.zoom = Math.max(.48, view.zoom / 1.18);
     requestDraw();
   }
   canvas.addEventListener('pointerdown', event => {
@@ -336,8 +344,9 @@ globalThis.createCityView = function createCityView() {
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) < 2) return;
     drag = { x: event.clientX, y: event.clientY, moved: true };
-    pose.azimuth += dx * .009;
-    pose.elevation = Math.max(.035, Math.min(1.38, pose.elevation + dy * .007));
+    const view = preview ? previewPose : pose;
+    view.azimuth += dx * .009;
+    view.elevation = Math.max(.035, Math.min(1.38, view.elevation + dy * .007));
     adjust();
   });
   canvas.addEventListener('pointerup', event => {
@@ -354,10 +363,11 @@ globalThis.createCityView = function createCityView() {
     adjust(event.deltaY < 0 ? 'in' : 'out');
   }, { passive: false });
   canvas.addEventListener('keydown', event => {
+    const view = preview ? previewPose : pose;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      pose.azimuth += event.key === 'ArrowLeft' ? -.14 : .14;
+      view.azimuth += event.key === 'ArrowLeft' ? -.14 : .14;
     } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      pose.elevation = Math.max(.035, Math.min(1.38, pose.elevation + (event.key === 'ArrowUp' ? .11 : -.11)));
+      view.elevation = Math.max(.035, Math.min(1.38, view.elevation + (event.key === 'ArrowUp' ? .11 : -.11)));
     } else if (event.key === '+' || event.key === '=') adjust('in');
     else if (event.key === '-') adjust('out');
     else return;
@@ -368,12 +378,15 @@ globalThis.createCityView = function createCityView() {
     button.addEventListener('click', () => adjust(button.dataset.camera));
   });
   function updatePlaybackControl() {
-    control.textContent = playing ? '暂停仿真' : '播放仿真';
-    control.setAttribute('aria-pressed', String(playing));
+    const active = preview ? previewPlaying : playing;
+    control.textContent = preview ? (active ? '暂停预览' : '播放预览') : (active ? '暂停仿真' : '播放仿真');
+    control.setAttribute('aria-pressed', String(active));
   }
   updatePlaybackControl();
   control.addEventListener('click', () => {
-    playing = !playing;
+    if (preview) previewPlaying = !previewPlaying;
+    else playing = !playing;
+    previousFrame = 0;
     updatePlaybackControl();
     requestDraw();
   });
@@ -387,9 +400,20 @@ globalThis.createCityView = function createCityView() {
 
   return {
     root,
-    update(next, pick) {
+    update(next, pick, mode = 'training', road = null) {
+      if (preview !== (mode === 'preview')) {
+        preview = mode === 'preview';
+        previousFrame = 0;
+        drag = undefined;
+        updatePlaybackControl();
+      }
+      root.dataset.mode = mode;
       visual = next;
       onPick = pick;
+      if (road !== streetTarget) {
+        streetTarget = road;
+        if (road) adjust('street');
+      }
       root.dataset.layers = next.layers.join(',');
       root.dataset.visualStep = String(next.stage);
       root.dataset.markers = next.markers.map(marker => marker.text).join(' | ');

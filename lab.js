@@ -43,7 +43,7 @@ function renderHome() {
   <main class="container">
     <section class="hero"><div class="hero-copy"><h1>孪生城市<br>虚拟仿真实验</h1>
     <p>从一片空白场景开始，逐步建起城市，接入多源观测并验证火警、拥堵和积水状态。</p><a class="button light" href="#modules">查看实验模块 ↓</a></div>
-    <figure><img src="assets/city.webp" width="1360" height="870" alt="带建筑纹理、绿化和道路标线的教学街区俯视图"><figcaption>搭建完成后的样例街区</figcaption></figure></section>
+    <figure class="hero-preview"><img src="assets/city.webp" width="1360" height="870" alt="带建筑纹理、绿化和道路标线的教学街区俯视图"><figcaption>搭建完成后的样例街区</figcaption></figure></section>
     <section id="modules" class="modules"><div class="section-title"><h2>实验模块</h2><div class="module-actions"><p>共 20 步 · 同一浏览器自动恢复实验进度</p>
     ${session.answers.length ? '<button type="button" id="restart">从空场景重做</button>' : ''}</div></div>
     <div class="cards">${modules.map(module => {
@@ -52,6 +52,10 @@ function renderHome() {
       <h3>${module.name}</h3><p>${module.description}</p><a href="${moduleLink(module)}">进入训练 →</a></article>`;
     }).join('')}</div></section>
   </main>`;
+  const showcase = visual(['core', 'all', 'sample', 'land'], 0);
+  city ??= createCityView();
+  root.querySelector('.hero-preview').prepend(city.root);
+  city.update({ ...showcase, lines: [], markers: [] }, null, 'preview');
   root.querySelector('#restart')?.addEventListener('click', () => {
     if (!confirm('重新开始会清除本机的实验进度。是否继续？')) return;
     session = { answers: [], choices: {}, active: {}, minute: 0 };
@@ -136,7 +140,9 @@ function renderTraining(module, message = '') {
   </main>`;
   city ??= createCityView();
   root.querySelector('#city-mount').append(city.root);
-  city.update(visual(view, session.minute), () => root.querySelector('#evidence')?.scrollIntoView({ block: 'nearest' }));
+  const streetTarget = !blocked && number === 6 ? (chosen === 'b' ? 'b' : 'a') : null;
+  city.update(visual(view, session.minute),
+    () => root.querySelector('#evidence')?.scrollIntoView({ block: 'nearest' }), 'training', streetTarget);
   root.querySelector('#choice')?.addEventListener('change', event => {
     session.choices[number] = event.target.value;
     session.active[module.id] = number;
@@ -196,10 +202,7 @@ async function start() {
     if (identity) sessionStorage.setItem('city-lab-identity', identity);
     else identity = sessionStorage.getItem('city-lab-identity');
   } catch { /* Some browsers disallow storage for local files. */ }
-  if (!identity) {
-    root.innerHTML = '<main class="container access"><h1>孪生城市虚拟仿真实验</h1><p>请使用课程入口链接，或打开本地演示。</p><a class="button" href="?demo=1">打开演示</a></main>';
-    return;
-  }
+  identity ||= 'demo';
   storageKey = 'city-lab:v2:' + identity;
   if (token) {
     try { history.replaceState(null, '', location.pathname + location.hash); } catch { /* local file */ }
