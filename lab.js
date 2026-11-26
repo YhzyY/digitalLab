@@ -124,6 +124,15 @@ function countComplete(module) {
 }
 function moduleLink(module) { return '#' + module.id; }
 
+function revealCurrentStep() {
+  const nav = root.querySelector('.step-nav');
+  if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+  const track = nav.getBoundingClientRect();
+  const step = nav.querySelector('[aria-current="step"]').getBoundingClientRect();
+  if (step.left < track.left) nav.scrollLeft += step.left - track.left - 9;
+  else if (step.right > track.right) nav.scrollLeft += step.right - track.right + 9;
+}
+
 function renderHome() {
   stepClock = undefined;
   root.innerHTML = `<header class="header"><div class="container topbar"><a href="#home" class="brand"><span>LAB</span>数字孪生城市实验室</a><a href="#modules">实验模块 ↓</a></div></header>
@@ -210,6 +219,13 @@ function renderTraining(module, message = '') {
     <span class="save" role="status" data-ilab-save>${remote ? '' : syncLabel()}</span>
     ${remote ? '<button type="button" id="retry-save" hidden>重试保存</button>' : ''}</div></header>
   <main class="container workspace">
+    <nav class="step-nav" aria-label="本模块步骤"><ol>${currentSteps.map(item => {
+      const completed = item.number <= progress;
+      return `<li><button type="button" data-step="${item.number}"${canView(item.number) ? '' : ' disabled'}${item.number === number ? ' aria-current="step"' : ''}
+        ${completed ? `class="completed" aria-label="第 ${item.number} 步，${item.title}，已完成"` : ''}>
+        <span class="step-badge"${completed ? ' aria-hidden="true"' : ''}>${completed ? '✓' : item.number}</span>
+        <span>${item.title}</span></button></li>`;
+    }).join('')}</ol></nav>
     <section class="map" aria-label="三维仿真场景">
       <div class="map-head"><strong>教学样例街区</strong>${showingDraft ? '<span class="draft-label">浅红色 · 尚未应用</span>' : ''}<span data-testid="stage">场景阶段 ${stage} / ${steps.length}</span></div>
       <div id="city-mount"></div>
@@ -240,12 +256,9 @@ function renderTraining(module, message = '') {
             ${remote.report ? '<p>PDF 实验报告已上传</p>' : ''}
             <p id="ilab-feedback" role="status"></p></div>` : ''}
         </div>`}
-      <nav class="step-nav" aria-label="本模块步骤">${currentSteps.map(item =>
-        `<button type="button" data-step="${item.number}"${canView(item.number) ? '' : ' disabled'}${item.number === number ? ' aria-current="step"' : ''}>
-          <span>${item.number}</span>${item.title}<small>${item.number <= progress ? '✓' : ''}</small></button>`).join('')}
-      </nav>
     </aside>
   </main>`;
+  revealCurrentStep();
   city ??= createCityView();
   root.querySelector('#city-mount').append(city.root);
   const streetTarget = !blocked && number === 6 ? (chosen === 'b' ? 'b' : 'a') : null;
@@ -362,6 +375,7 @@ async function start() {
     render();
     if (location.hash !== '#modules') window.scrollTo(0, 0);
   });
+  window.addEventListener('resize', revealCurrentStep);
   render();
   if (remote && pending.length) void flush();
 }
