@@ -240,5 +240,40 @@ globalThis.cityExperiment = (() => {
     };
   }
 
-  return { modules, steps, times, result, visual };
+  function previewVisual(applied, candidate, minute) {
+    const current = visual(applied, minute);
+    const next = visual(candidate, minute);
+    const key = JSON.stringify;
+    const flagChanges = (before, after) => {
+      const existing = new Set(before.map(key));
+      return after.map(item => !existing.has(key(item)));
+    };
+    const color = '#f3979c';
+    const changedLines = flagChanges(current.lines, next.lines);
+    const changedMarkers = flagChanges(current.markers, next.markers);
+    const draftLayers = next.layers.filter(layer => !current.layers.includes(layer));
+    if (!changedMarkers.some(Boolean) && next.markers.length) changedMarkers[changedMarkers.length - 1] = true;
+    return {
+      ...next,
+      draftLayers,
+      lines: next.lines.map((line, index) => changedLines[index] ? { ...line, color } : line),
+      markers: next.markers.map((marker, index) => changedMarkers[index] ? { ...marker, color, draft: true } : marker),
+      simulation: {
+        ...next.simulation,
+        draft: {
+          color,
+          traffic: ['a', 'b'].filter(road => key(current.simulation.traffic[road]) !== key(next.simulation.traffic[road])),
+          paths: flagChanges(current.simulation.packetPaths, next.simulation.packetPaths),
+          signal: current.stage < 2 && next.stage >= 2,
+          detector: next.stage >= 5 && (current.stage < 5 || key(current.simulation.sensor) !== key(next.simulation.sensor)),
+          video: next.stage >= 10 && (current.stage < 10 || current.simulation.route !== next.simulation.route),
+          gauge: current.stage < 14 && next.stage >= 14,
+          water: key(current.simulation.water) !== key(next.simulation.water),
+          smoke: current.simulation.smoke !== next.simulation.smoke,
+        },
+      },
+    };
+  }
+
+  return { modules, steps, times, result, visual, previewVisual };
 })();

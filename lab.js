@@ -1,6 +1,6 @@
 'use strict';
 
-const { modules, steps, times, result, visual } = globalThis.cityExperiment;
+const { modules, steps, times, result, visual, previewVisual } = globalThis.cityExperiment;
 const root = document.querySelector('#app');
 let storageKey;
 let session = { answers: [], choices: {}, active: {}, minute: 0 };
@@ -126,7 +126,7 @@ function moduleLink(module) { return '#' + module.id; }
 
 function renderHome() {
   stepClock = undefined;
-  root.innerHTML = `<header class="header"><div class="container topbar"><a href="#home" class="brand"><span>城</span>数字孪生城市实验室</a><a href="#modules">实验模块 ↓</a></div></header>
+  root.innerHTML = `<header class="header"><div class="container topbar"><a href="#home" class="brand"><span>LAB</span>数字孪生城市实验室</a><a href="#modules">实验模块 ↓</a></div></header>
   <main class="container">
     <section class="hero"><div class="hero-copy"><h1>数字孪生城市<br>虚拟仿真实验</h1>
     <p>从一片空白场景开始，逐步建起城市，接入多源观测并验证火警、拥堵和积水状态。</p><a class="button light" href="#modules">查看实验模块 ↓</a></div>
@@ -136,7 +136,7 @@ function renderHome() {
     <div class="cards">${modules.map(module => {
       const count = countComplete(module), total = module.end - module.start + 1;
       return `<article><div class="card-top"><span class="module-icon">${module.icon}</span><small>${count === total ? '已完成' : count ? count + ' / ' + total + ' 已完成' : '未开始'}</small></div>
-      <h3>${module.name}</h3><p>${module.description}</p><a href="${moduleLink(module)}">进入训练 →</a></article>`;
+      <h3>${module.name}</h3><p>${module.description}</p><a href="${moduleLink(module)}">进入实验 →</a></article>`;
     }).join('')}</div></section>
   </main>`;
   const showcase = visual(['core', 'all', 'sample', 'land'], 0);
@@ -190,7 +190,6 @@ function renderTraining(module, message = '') {
   const stage = blocked ? progress : Math.min(progress, number);
   const view = session.answers.slice(0, stage);
   const chosen = session.choices[number] || session.answers[number - 1] || (step.single ? step.options[0][0] : '');
-  const output = result(number, view, session.minute);
   const done = stage === number;
   const dirty = done && chosen !== session.answers[number - 1];
   const nextNumber = number + 1;
@@ -199,6 +198,9 @@ function renderTraining(module, message = '') {
   const currentSteps = steps.slice(module.start - 1, module.end);
   const locked = Boolean(remote?.submission);
   const delivered = remote?.submission?.status === 'complete';
+  const showingDraft = !blocked && !locked && (!done || dirty) && step.options.some(([id]) => id === chosen);
+  const candidate = showingDraft ? [...view.slice(0, number - 1), chosen] : view;
+  const output = result(number, candidate, session.minute);
   const selectMarkup = step.single ? `<div class="selected-input">${step.options[0][1]}</div>` : `<select id="choice"${locked ? ' disabled' : ''}>
     <option value="" disabled${chosen ? '' : ' selected'}>请选择</option>
     ${step.options.map(([id, label]) => `<option value="${id}"${chosen === id ? ' selected' : ''}>${label}</option>`).join('')}
@@ -209,7 +211,7 @@ function renderTraining(module, message = '') {
     ${remote ? '<button type="button" id="retry-save" hidden>重试保存</button>' : ''}</div></header>
   <main class="container workspace">
     <section class="map" aria-label="三维仿真场景">
-      <div class="map-head"><strong>教学样例街区</strong><span data-testid="stage">场景阶段 ${stage} / ${steps.length}</span></div>
+      <div class="map-head"><strong>教学样例街区</strong>${showingDraft ? '<span class="draft-label">浅红色 · 尚未应用</span>' : ''}<span data-testid="stage">场景阶段 ${stage} / ${steps.length}</span></div>
       <div id="city-mount"></div>
       <div class="timeline"><strong>观测时间</strong>${stage < 7 ?
         '<span class="time-hint">接入观测后可回放</span>' : `<div>${times.map((time, minute) =>
@@ -224,14 +226,14 @@ function renderTraining(module, message = '') {
           <label${step.single ? '' : ' for="choice"'}>${step.label}</label>
           ${selectMarkup}
           <button class="button" id="apply" type="button"${!chosen || locked ? ' disabled' : ''}>${dirty ? '重新应用并更新场景' : '应用并更新场景'}</button>
-          <p class="notice" role="status">${message || (dirty ? '参数草稿已修改。应用后更新场景。' : '')}</p>
+          <p class="notice" role="status">${message || (showingDraft ? '正在预览，点击「应用」确认这次修改。' : '')}</p>
         </div>
         <div class="control-group evidence-panel" id="evidence">
-          <h3>当前步骤结果</h3><div class="reading"><strong>${output.headline}</strong></div>
+          <h3>${showingDraft ? '步骤预览结果' : '当前步骤结果'}</h3><div class="reading"><strong>${output.headline}</strong></div>
           <p class="evidence">${output.detail}</p>
-          ${done && nextModule ? `<button type="button" class="button secondary" id="next">下一步 →</button>` : ''}
-          ${done && number === steps.length ? '<button type="button" class="button secondary" id="export">导出实验结果</button>' : ''}
-          ${remote && done && number === steps.length ? `<div class="control-group">
+          ${done && !showingDraft && nextModule ? `<button type="button" class="button secondary" id="next">下一步 →</button>` : ''}
+          ${done && !showingDraft && number === steps.length ? '<button type="button" class="button secondary" id="export">导出实验结果</button>' : ''}
+          ${remote && done && !showingDraft && number === steps.length ? `<div class="control-group">
             ${delivered ? '<strong>成绩已回传实验空间</strong>' : '<button type="button" class="button" id="ilab-submit">' + (locked ? '重试回传' : '提交到实验空间') + '</button>'}
             <button type="button" class="button secondary" id="ilab-result">查询回传结果</button>
             ${delivered && !remote.report ? '<label for="ilab-pdf">实验报告（PDF，可选）</label><input type="file" id="ilab-pdf" accept=".pdf,application/pdf"><button type="button" class="button secondary" id="ilab-report">上传报告</button>' : ''}
@@ -247,7 +249,7 @@ function renderTraining(module, message = '') {
   city ??= createCityView();
   root.querySelector('#city-mount').append(city.root);
   const streetTarget = !blocked && number === 6 ? (chosen === 'b' ? 'b' : 'a') : null;
-  city.update(visual(view, session.minute),
+  city.update(showingDraft ? previewVisual(view, candidate, session.minute) : visual(view, session.minute),
     () => root.querySelector('#evidence')?.scrollIntoView({ block: 'nearest' }), 'training', streetTarget);
   if (remote) {
     root.querySelector('[data-ilab-save]').textContent = syncLabel();

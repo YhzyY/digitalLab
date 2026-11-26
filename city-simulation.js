@@ -81,6 +81,7 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
   };
   const fleet = { a: [], b: [] };
   let firstVehiclePosition = '';
+  let paintState;
 
   function resetLane(road, count, sampledDirection) {
     const layout = roadLayout[road];
@@ -103,6 +104,20 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
     const flows = state?.traffic || {};
     resetLane('a', Math.min(24, flows.a?.count || 0), flows.a?.direction);
     resetLane('b', Math.min(24, flows.b?.count || 0), flows.b?.direction);
+    const draftRoads = state?.draft?.traffic || [];
+    const paintKey = [fleet.a.length, fleet.b.length, ...draftRoads].join(',');
+    if (paintKey !== paintState) {
+      paintState = paintKey;
+      const pink = new THREE.Color('#f3979c');
+      for (let i = 0; i < fleet.a.length + fleet.b.length; i++) {
+        const color = new THREE.Color(trafficColors[(i * 5) % trafficColors.length]);
+        if (draftRoads.includes(i < fleet.a.length ? 'a' : 'b')) color.lerp(pink, .65);
+        pieces[0].mesh.setColorAt(i, color);
+        pieces[1].mesh.setColorAt(i, color);
+      }
+      pieces[0].mesh.instanceColor.needsUpdate = true;
+      pieces[1].mesh.instanceColor.needsUpdate = true;
+    }
     let index = 0;
     firstVehiclePosition = '';
     for (const road of ['a', 'b']) {
@@ -199,14 +214,15 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
   const surface = new THREE.ShapeGeometry(waterShape, 14);
   surface.rotateX(-Math.PI / 2);
   const waterMaterial = new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 }, opacity: { value: 0 } },
+    uniforms: { time: { value: 0 }, opacity: { value: 0 }, draft: { value: 0 } },
     vertexShader: 'varying vec2 local; void main() {local=position.xz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-    fragmentShader: `uniform float time; uniform float opacity; varying vec2 local;
+    fragmentShader: `uniform float time; uniform float opacity; uniform float draft; varying vec2 local;
       void main() {
         float waves = .52 + .13*sin(local.x*1.64 + local.y*1.75 + time*2.1)
           + .077*sin(local.x*.89 - local.y*2.85 - time*1.6);
         float edge = 1. - smoothstep(1., 6., abs(local.y));
-        gl_FragColor = vec4(mix(vec3(.16,.29,.34), vec3(.49,.70,.76), waves),
+        vec3 color = mix(vec3(.16,.29,.34), vec3(.49,.70,.76), waves);
+        gl_FragColor = vec4(mix(color, vec3(.96,.59,.61), draft*.65),
           opacity * (.5 + .28*edge + waves*.12));
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -236,6 +252,24 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
   let currentSensor = new THREE.Vector3(-25, 0, -5);
   let active = false;
   let animated = false;
+  const tinted = new WeakMap();
+
+  function previewObject(group, draft) {
+    if (group.userData.draft === draft) return;
+    group.userData.draft = draft;
+    group.traverse(object => {
+      if (!object.isMesh) return;
+      let pair = tinted.get(object);
+      if (!pair && draft) {
+        const original = object.material;
+        const overlay = original.clone();
+        overlay.color.lerp(new THREE.Color('#f3979c'), .68);
+        pair = { original, overlay };
+        tinted.set(object, pair);
+      }
+      if (pair) object.material = draft ? pair.overlay : pair.original;
+    });
+  }
 
   return {
     update(state, delta, snap = false) {
@@ -246,6 +280,11 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
       }
       elapsed += delta;
       active = stage >= 5;
+      const draft = state?.draft;
+      previewObject(detector, Boolean(draft?.detector));
+      previewObject(video, Boolean(draft?.video));
+      previewObject(gauge, Boolean(draft?.gauge));
+      previewObject(signal, Boolean(draft?.signal));
       signal.visible = stage >= 2;
       for (const [direction, lamp] of signalLights.entries()) {
         const green = stage >= 7 && Math.floor(elapsed / 13) % 2 === direction;
@@ -272,12 +311,13 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
       const vectors = state?.packetPaths || [];
       for (const beam of beams) {
         const index = beam.userData.index;
-        const path = vectors[index % (vectors.length || 1)];
+        const pathIndex = index % (vectors.length || 1);
+        const path = vectors[pathIndex];
         beam.visible = Boolean(path && index < path.count * vectors.length);
         if (!beam.visible) continue;
         const t = (elapsed * .6 + index * .217) % 1;
         beam.position.fromArray(path.from).lerp(offset.fromArray(path.to), t);
-        beam.material.color.set(path.color);
+        beam.material.color.set(state.draft?.paths[pathIndex] ? state.draft.color : path.color);
       }
 
       const waterTarget = state?.water?.depth || 0;
@@ -290,6 +330,7 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
       water.scale.set(1, 1, .54 + waterHeight / 46);
       waterMaterial.uniforms.time.value = elapsed;
       waterMaterial.uniforms.opacity.value = waterFade;
+      waterMaterial.uniforms.draft.value = Number(Boolean(state?.draft?.water));
 
       for (const [index, sprite] of smoke.entries()) {
         sprite.visible = Boolean(state?.smoke);
@@ -297,6 +338,7 @@ globalThis.createCitySimulation = function createCitySimulation(scene) {
         const t = (elapsed * .32 + index * .1) % 1;
         sprite.position.set(70 + t * 11 + Math.sin(index * 2) * 2.1, 30 + t * 21, -43 - t * 8);
         sprite.scale.setScalar(2.7 + 10 * t);
+        sprite.material.color.set(state.draft?.smoke ? state.draft.color : '#ffffff');
         sprite.material.opacity = Math.sin(Math.PI * t) * .62;
       }
       animated = stage === 5 || vectors.length > 0 || physicalCars > 0 || water.visible || Boolean(state?.smoke) ||

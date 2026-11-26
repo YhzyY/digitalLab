@@ -1,4 +1,4 @@
-# 孪生城市虚拟仿真实验
+# 数字孪生城市虚拟仿真实验
 
 在 Chrome 或 Edge 打开 [index.html](index.html) 即可进入实验首页。页面使用原生 HTML、CSS、JavaScript 和随项目提供的 Three.js r186。运行时可离线使用。
 

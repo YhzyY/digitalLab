@@ -38,6 +38,8 @@ globalThis.createCityView = function createCityView() {
   let renderer, scene, camera, grid, worldLines, simulation, cityContext;
   const layers = new Map();
   const visibleLayers = new Map();
+  const draftMaterials = new WeakMap();
+  const tintedLayers = new Set();
   let previousLines = '';
 
   function showError(message) {
@@ -204,6 +206,29 @@ globalThis.createCityView = function createCityView() {
   function applyLayers(delta) {
     let moving = false;
     for (const [name, group] of layers) {
+      const tinted = visual.draftLayers?.includes(name) || false;
+      if (tintedLayers.has(name) !== tinted) {
+        group.traverse(object => {
+          if (!object.material) return;
+          let pair = draftMaterials.get(object);
+          if (!pair) {
+            const original = object.material;
+            const overlay = original.clone();
+            if (overlay.emissive) {
+              overlay.emissive.set('#f3979c');
+              overlay.emissiveIntensity = .33;
+            } else {
+              overlay.color.set('#f3979c');
+              overlay.vertexColors = false;
+            }
+            pair = { original, overlay };
+            draftMaterials.set(object, pair);
+          }
+          object.material = tinted ? pair.overlay : pair.original;
+        });
+        if (tinted) tintedLayers.add(name);
+        else tintedLayers.delete(name);
+      }
       const shouldShow = visual.layers.includes(name);
       if (!shouldShow) {
         if (group.visible) renderer.shadowMap.needsUpdate = true;
@@ -307,9 +332,9 @@ globalThis.createCityView = function createCityView() {
       context.stroke();
       context.beginPath();
       context.roundRect(left, top, textWidth, 22, 5);
-      context.fillStyle = '#16382fed';
+      context.fillStyle = marker.draft ? '#f9d2d4f5' : '#16382fed';
       context.fill();
-      context.fillStyle = '#fffefa';
+      context.fillStyle = marker.draft ? '#572e34' : '#fffefa';
       context.textAlign = 'center';
       context.fillText(marker.text, left + textWidth / 2, top + 15);
       context.beginPath();
@@ -408,6 +433,7 @@ globalThis.createCityView = function createCityView() {
         updatePlaybackControl();
       }
       root.dataset.mode = mode;
+      root.dataset.draft = String(Boolean(next.draftLayers));
       visual = next;
       onPick = pick;
       if (road !== streetTarget) {
