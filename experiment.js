@@ -1,279 +1,237 @@
 'use strict';
 
 globalThis.cityExperiment = (() => {
-  const modules = [
-    { id: 'city-twin', name: '数字孪生城市搭建环节', icon: '城', start: 1, end: 7, description: '从空场景建立街区范围、道路、建筑和设备，再验证观测如何更新孪生对象。' },
-    { id: 'data-fusion', name: '多源数据融合环节', icon: '融', start: 8, end: 14, description: '治理观测记录，核对视频样例轨迹，统一时空口径，对比单源与融合结果。' },
-    { id: 'situation-awareness', name: '智能态势感知数据处理环节', icon: '势', start: 15, end: 20, description: '配置火警、拥堵和积水规则，改变关键观测后复验并追查证据。' },
+  const purposes = [
+    ['traffic', '交通运行监测'],
+    ['water', '河流水位与积水监测'],
+    ['facilities', '城市空间与设施管理'],
   ];
-  const steps = [
-    ['设定街区范围', '选择工程范围', '从空场景建立统一的调查范围，后续道路和建筑将引用同一坐标框架。', [['core', '街区核心区 · 400 × 350 m'], ['extended', '扩展调查区 · 480 × 410 m']]],
-    ['导入街区路网', '选择道路数据', '导入道路几何，并观察十字路口、路面和车道标线如何进入场景。', [['main', '主干道与交叉口'], ['all', '完整街区路网']]],
-    ['添加建筑模型', '选择建筑范围', '将带立面与屋顶纹理的建筑资产加入场景，定位样例建筑 B-01。', [['sample', '街区建筑模型']], true],
-    ['补齐地面和绿化', '选择地面资源', '加入街区地面、步行空间和绿化，区分背景资源与可监测对象。', [['land', '街区地面、绿化与公园']], true],
-    ['校核空间参考', '选择设备坐标处理', '检测器样本采用局部米制坐标。将设备坐标变换到城市参考系，检查落点。', [['corrected', '平移东向 −30 m、北向 +15 m'], ['raw', '直接使用原始坐标']]],
-    ['关联检测器与路段', '设置目标路段', '选择路段即可从街道视角预览。应用后，检查 D-01 的观测关联线和路段标注。', [['a', '路段 A · 临江大道'], ['b', '路段 B · 云桥路']]],
-    ['添加车流并映射观测', '选择显示指标', '根据样例观测生成沿车道行驶的车辆。切换观测时间，比较车流密度和行驶速度。', [['flow', '车流量（辆/分）'], ['speed', '平均速度（km/h）']]],
-    ['识别并映射字段', '选择车辆计数字段', '比较车流和速度字段。统一车辆计数输入，以便与视频计数比较。', [['flow', 'veh_count · 车辆数'], ['speed', 'avg_speed · 平均车速']]],
-    ['清洗异常记录', '选择质量处理规则', '08:01 的检测器数据包含重复记录与质量标记。比较保留或剔除重复的影响。', [['dedup', '保留最新记录并标记质量'], ['raw', '保留原始记录']]],
-    ['设置视频计数线', '选择通过方向', '使用预置样例轨迹核对过线计数。计数线和通行方向会显示在对应断面。', [['forward', '正向过线'], ['reverse', '反向过线']]],
-    ['按时间窗口对齐', '设置统计粒度', '把检测器记录和视频计数放进同一时间窗口。比较一分钟与两分钟统计。', [['1', '一分钟 · 左闭右开'], ['2', '两分钟 · 左闭右开']]],
-    ['运行多源融合', '选择数据策略', '在对齐的记录中按来源质量选用结果。查看道路当前计数和被采用的来源。', [['quality', '按质量选源'], ['detector', '只用检测器'], ['video', '只用视频']]],
-    ['执行对照与消融', '选择对照条件', '在同一窗口内移除一路来源，比较结果，查看融合对缺测和低质量记录的影响。', [['drop-video', '移除视频来源'], ['drop-detector', '移除检测器来源']]],
-    ['接入新增监测设备', '关联水位计 W-01', '将水位观测关联到低洼路段或备选路段，后续积水情景会使用此配置。', [['b', '路段 B · 云桥路低洼段'], ['a', '路段 A · 临江大道']]],
-    ['生成建筑火警候选', '设置证据组合', '按建筑区域归集烟感、温度和视频烟雾证据，检查候选告警。', [['two', '三项证据至少满足两项'], ['all', '三项证据全部满足']]],
-    ['计算拥堵状态', '设置速度阈值', '计算最近三个已完成窗口的平均车速，判断关联道路是否低于教学阈值。', [['35', '平均车速低于 35 km/h'], ['40', '平均车速低于 40 km/h']]],
-    ['生成道路积水等级', '设置积水阈值', '将水位观测映射到 W-01 已关联的路段，并用阈值区分正常和积水。', [['15', '15 cm 及以上为积水'], ['20', '20 cm 及以上为积水']]],
-    ['注入关键观测缺测', '选择移除的观测', '对样例数据做一次可复验的扰动，观察相应道路或建筑的状态变化。', [['water', '移除水位观测'], ['smoke', '移除烟感记录'], ['speed', '移除连续三个窗口中的一条车速记录']]],
-    ['追溯对象与证据', '选择要核验的对象', '定位到实景中的对象，检查原始观测、规则和该次判断之间的关系。', [['water', '核验积水道路'], ['smoke', '核验建筑火警'], ['speed', '核验拥堵道路']]],
-    ['前后对照与成果导出', '选择显示的运行', '切换原始和受扰条件，核对状态差异，并导出本次操作、配置和证据。', [['before', '查看扰动前'], ['after', '查看扰动后']]],
-  ].map(([title, label, description, options, single], index) => ({ number: index + 1, title, label, description, options, single }));
-  const roads = {
-    a: { label: '临江大道', points: [[-115, 1, 0], [-15, 1, 0]], marker: [-69, 11, 0] },
-    b: { label: '云桥路', points: [[0, 1, -17], [0, 1, -99]], marker: [0, 9, -55] },
-  };
-  const times = ['08:00', '08:01', '08:02'];
-  const detector = [24, 37, 18], speeds = [39, 32, 43], water = [8, 22, 24];
-  const sampleTracks = times.map((_, window) => [
-    ...Array.from({ length: [20, 34, 22][window] }, (_, id) => ({ id: 'F' + id, from: -77, to: -38 })),
-    ...Array.from({ length: [12, 8, 10][window] }, (_, id) => ({ id: 'R' + id, from: -37, to: -78 })),
-  ]);
-
-  function stateAt(answers, minute) {
-    const a = number => answers[number - 1];
-    const route = a(6) || 'a';
-    const wetRoad = a(14) || 'b';
-    const countTracks = index => sampleTracks[index].filter(track => a(10) === 'reverse'
-      ? track.from >= -56 && track.to < -56 : track.from < -56 && track.to >= -56).length;
-    const length = Number(a(11) || 1), start = Math.floor(minute / length) * length;
-    const windows = [...detector.keys()].slice(start, start + length);
-    const pair = windows.map(index => ({
-      detector: a(8) === 'speed' ? null : detector[index] + (a(9) === 'raw' && index === 1 ? 11 : 0),
-      video: countTracks(index),
-      quality: index !== 1,
+  const modules = [
+    { id: 'city-twin', name: '数字孪生城市搭建环节', icon: '城', start: 1, end: 11, description: '从调查范围和测量控制开始，采集影像、核验模型，交付可查询的滨水街区。' },
+    { id: 'data-fusion', name: '多源数据融合环节', icon: '融', start: 12, end: 17, description: '在现场定位设备，接入车流、视频和水位样本，逐分钟核对融合值及其来源。' },
+    { id: 'situation-awareness', name: '智能态势感知数据处理环节', icon: '势', start: 18, end: 21, description: '让观测驱动道路和河面，回放漫岸与低处积水，依据现场样本验收或更新场景。' },
+  ];
+  const materials = [
+    ['cad', 'CAD 总平面图'],
+    ['traffic', '交通网络图'],
+    ['dem', '数字高程模型'],
+  ];
+  function importedMaterials(marks, applied) {
+    if (!Array.isArray(marks)) return [];
+    const legacy = applied && marks.includes('sources');
+    return materials.filter(([id]) => legacy || marks.includes(id)).map(([id]) => id);
+  }
+  const referenceInputs = [
+    ['plane', '平面坐标框架：CGCS2000（2000国家大地坐标系）'],
+    ['height', '高程框架：1985国家高程基准'],
+    ...materials,
+  ];
+  const referenceTasks = [...referenceInputs, ['converted', '坐标转换完成'], ['verified', '核对无误']];
+  function alignLakeReference() {
+    const {x, z, level} = citySurveyMap.lake;
+    const target = [x, -z, level];
+    // Teaching samples reproduce the horizontal and vertical offsets of the exercise.
+    const aligned = [[0,0,0], [3,4,0], [3,4,.8]].map(offset => {
+      const source = target.map((value, i) => value + offset[i]);
+      const translation = source.map((value, i) => target[i] - value);
+      return source.map((value, i) => value + translation[i]);
+    });
+    return {target, aligned};
+  }
+  const surveyKinds = { control: '控制点', check: '检查点' };
+  const surveyLimit = 3;
+  function surveyPointsInBounds(points, bounds) {
+    if (!Array.isArray(points) || !bounds) return [];
+    const accepted = [];
+    const counts = { control: 0, check: 0 };
+    for (const item of points.slice(0, surveyLimit * 2)) {
+      if (!item || !Object.hasOwn(surveyKinds, item.kind)) continue;
+      const {kind, x, z} = item;
+      if (!Number.isFinite(x) || !Number.isFinite(z) || x < bounds.minX || x > bounds.maxX ||
+          z < bounds.minZ || z > bounds.maxZ || counts[kind] >= surveyLimit ||
+          accepted.some(point => Math.hypot(point.x - x, point.z - z) < 1)) continue;
+      accepted.push({kind,x,z});
+      counts[kind]++;
+    }
+    return accepted;
+  }
+  function surveyRows(points) {
+    const counts = { control: 0, check: 0 };
+    return points.map(({kind,x,z}) => ({
+      kind, x, z, name: surveyKinds[kind] + ++counts[kind],
+      X: x, Y: -z, H: citySurveyMap.groundElevation(x,z) + (bankCrest - citySurveyMap.bankProfile(4)[4][1]),
     }));
-    const choose = (pair, mode) => mode === 'video' || (mode !== 'detector' && (!pair.quality || pair.detector === null))
-      ? { value: pair.video, source: '视频' } : { value: pair.detector, source: '检测器' };
-    const sum = items => items.every(item => item.value !== null)
-      ? items.reduce((total, item) => total + item.value, 0) : null;
-    const chosen = pair.map(item => choose(item, a(12)));
-    const total = sum(chosen);
-    const beforeAfter = kind => {
-      const missing = a(20) === 'before' ? null : a(18);
-      if (kind === 'water') {
-        if (missing === 'water') return { status: '未知', value: '水位缺测', color: '#aa8bb3' };
-        const height = water[minute];
-        return height >= Number(a(17) || 15)
-          ? { status: '积水', value: height + ' cm', color: '#4aaee7' } : { status: '正常', value: height + ' cm', color: '#36c18c' };
+  }
+  const flightParameters = [
+    {id:'height', label:'飞行高度', unit:'m', min:60, max:140, best:100},
+    {id:'forward', label:'航向重叠率', unit:'%', min:60, max:90, best:80},
+    {id:'side', label:'旁向重叠率', unit:'%', min:30, max:80, best:60},
+  ];
+  function normalizeFlightSettings(settings) {
+    return Object.fromEntries(flightParameters.map(({id,min,max,best}) => {
+      const value = settings?.[id];
+      return [id, Number.isFinite(value) ? Math.min(max,Math.max(min,Math.round(value))) : best];
+    }));
+  }
+  function planSurveyFlight(bounds, choice, settings) {
+    const {height,forward,side} = normalizeFlightSettings(settings);
+    const {minX,maxX,minZ,maxZ} = bounds;
+    const width = maxX-minX, depth = maxZ-minZ;
+    const passes = [], footprints = [];
+    for (const northSouth of (choice === 'oblique' ? [false,true] : [false])) {
+      const along = northSouth ? depth : width, across = northSouth ? width : depth;
+      const length = along*.34*height/100, breadth = across*.43*height/100;
+      const begin = along*.04 + length/2, end = along-begin;
+      const spacing = length*(1-forward/100);
+      const count = Math.ceil((end-begin)/spacing)+1;
+      const separation = breadth*(1-side/100);
+      const locate = (a,b) => northSouth ? [minX+b,minZ+a] : [minX+a,minZ+b];
+      for (const i of [0,1]) {
+        const cross = across/2 + (i-.5)*separation;
+        const pass = [locate(begin,cross),locate(end,cross)];
+        if (i === 1) pass.reverse();
+        passes.push(pass);
+        for (let exposure=0; exposure<count; exposure++) {
+          const [x,z] = locate(Math.min(end,begin+spacing*exposure),cross);
+          const w = northSouth ? breadth : length, d = northSouth ? length : breadth;
+          footprints.push({x:x-w/2,z:z-d/2,w,d});
+        }
       }
-      if (kind === 'smoke') {
-        const sample = { smokeAlarm: missing === 'smoke' ? null : true, temperature: 67, videoSmoke: false };
-        const qualifying = [sample.smokeAlarm === true, sample.temperature >= 60, sample.videoSmoke].filter(Boolean).length;
-        const required = a(15) === 'all' ? 3 : 2;
-        return qualifying >= required
-          ? { status: '火警候选', value: qualifying + '/3 项证据命中', color: '#f08469' }
-          : { status: '未触发', value: qualifying + '/3 项证据命中', color: '#80b89d' };
-      }
-      if (missing === 'speed') return { status: '未知', value: '三个历史窗口证据不完整', color: '#aa8bb3' };
-      // The fixture contains three completed history windows preceding each evaluation.
-      const history = [[39, 32, 43], [32, 43, 31], [43, 31, 34]][minute];
-      const average = history.reduce((total, speed) => total + speed, 0) / 3;
-      return average < Number(a(16) || 35)
-        ? { status: '拥堵', value: average.toFixed(1) + ' km/h', color: '#f1a258' }
-        : { status: '畅通', value: average.toFixed(1) + ' km/h', color: '#36c18c' };
+    }
+    return {passes,footprints};
+  }
+  // Reference landmarks on the same registered aerial image used to select the survey extent.
+  const coverageSites = {
+    bank: [.552,.524],
+    corner: [.783,.600],
+    glare: [.598456,.59318],
+  };
+  function coverageCasesForBounds(bounds) {
+    const crop = citySurveyMap.imageCrop(bounds,1,1);
+    return Object.keys(coverageSites).filter(id => {
+      const [x,y] = coverageSites[id];
+      return x >= crop.x && x <= crop.x+crop.width && y >= crop.y && y <= crop.y+crop.height;
+    });
+  }
+  const steps = [
+    ['划定范围和用途', '选择调查范围', '确定项目的边界在哪，以及建出来的模型是给谁用的（是做宏观城市规划，还是微观的交通仿真）。', [['river', '滨水片区 · 岸线与低洼路段'], ['block', '街区片区 · 路口与沿街建筑'], ['manual', '手动圈选区域']]],
+    ['收集现有资料', '建立资料清单', '寻找测区内已有的、可复用的基础地理数据，避免重复劳动。', [['base', '导入三份基础资料'], ['full', '基础资料加历史汛情记录']]],
+    ['统一坐标与高程', '设置参考系', '确认平面和高程框架，在三张资料图上选择同一处湖泊，再转换并核对。', [['transform', '以景观湖为公共点转换并核对'], ['local', '保留原始坐标以检查偏移']]],
+    ['布设控制点与检查点', '安排测量点位', '在街区图上布设 3 个控制点和 3 个检查点，再派出外业人员获取真实三维空间坐标数据。', [['field', '外业测量 3 个控制点和 3 个检查点'], ['spread', '两端布控并留出独立检查点'], ['cluster', '集中布控并留出远端检查点']]],
+    ['设计航线并采集', '选择航摄方案', '在工程范围内排布航带，操作无人机（或无人机集群）按照规划航线对测区进行拍照', [['grid', '平行航带 · 垂直摄影'], ['oblique', '交叉航带 · 增加倾斜摄影']]],
+    ['检查覆盖情况并补采', '检查航片缺口', '检查测区内的待核查区域，判断航片问题，选择补拍方式，再根据局部影像验收。', [['all', '核查并补采测区内的区域'], ['bank', '加拍岸脚和护岸衔接处'], ['corner', '绕拍楼角和立面遮挡区']]],
+    ['对齐照片并定位', '选择解算约束', '自动寻找不同照片里的同一个物体，算出每张照片精确的拍摄位置，并提取出海量密集的“点云”。', [['control', '匹配特征并引入控制点'], ['position', '匹配特征并仅用机载初值定位']]],
+    ['生成三维和地图成果', '选择核对成果', '在点云骨架的基础上，构建三角网（把点连成面），再把照片的颜色“贴”上去（纹理映射），生成三维模型。', [['surface', '查看纹理网格和建筑立面'], ['ortho', '查看正射地图和岸线轮廓']]],
+    ['检查模型精度', '选择验算指标', '把生成的三维模型拿来，用第4步测的“检查点”去量一下它的平面和高程误差。', [['plane', '检查平面误差 · 限差 0.30 m'], ['height', '检查高程误差 · 限差 0.20 m']]],
+    ['城市对象建档', '检查对象属性', '为道路、建筑、河段和低洼区建立稳定编号，选择一组对象核对几何和业务属性。', [['transport', '核对道路与建筑档案'], ['water', '核对河段与低洼区档案']]],
+    ['装配场景并发布', '选择发布视图', '装配模型、底图和对象索引，生成可回看的本地教学场景版本，同时保留精度核验记录。', [['survey', '发布测绘核查视图'], ['operations', '发布运行监测视图']]],
+    ['盘点和测量设备', '选择设备定位方式', '到交通检测器、摄像机和河边水尺所在位置，核对编号、朝向和安装点，记录定位依据。', [['map', '以底图量取安装点'], ['field', '采用现场复测点位']]],
+    ['关联设备与观测对象', '选择道路观测断面', '为检测器与摄像机选择同一处道路断面，检查两条设备关联线。水位计沿用河段测点。', [['a', '断面 A · 临江大道'], ['b', '断面 B · 云桥路']]],
+    ['接入设备观测数据', '选择接入方式', '打开三台设备的样例记录，检查时间、单位和来源。检测器提供车数与速度，摄像机提供轨迹，水位计提供河面高程。', [['live', '按时间顺序接入模拟观测'], ['archive', '从归档批次读取模拟观测']]],
+    ['从视频提取观测', '选择过线计数口径', '把虚拟摄像机轨迹与断面线相交的事件按方向归类，每个轨迹编号在该分钟只计一次。', [['forward', '只计正向过线'], ['both', '汇总正向与反向过线']]],
+    ['清洗并对齐数据', '处理重复记录', '按事件时间对齐到同一分钟，再检查设备、方向和批次编号。08:01 有一批 8 辆的检测记录重复到达。', [['clean', '按批次去重并保留质量标记'], ['raw', '保留重复批次作对照']]],
+    ['融合并记录依据', '选择车流取值方法', '在时间和方向均一致的窗口选择统计来源。水位使用河边水尺单列，融合记录保留来源、单位与质量依据。', [['quality', '检测器低质量时采用视频计数'], ['detector', '固定采用检测器并保留质量标记']]],
+    ['映射观测到对象', '选择核对的映射', '把车流与速度写入道路断面，把水面高程写入河段；低洼路面积水另取现场样本。选择一条关联检查单位。', [['traffic', '跟踪车流到道路断面'], ['water', '跟踪河面高程到河段']]],
+    ['生成动态画面', '选择动态画面', '回放同一时间轴，让车流和速度驱动车辆，河面随水位升高。观察末帧护岸漫溢与低处路面水迹。', [['combined', '联看车流与河面'], ['water', '重点查看河岸和低洼路面']]],
+    ['状态判断与时间回放', '选择教学阈值', '逐帧比较路段速度、河面与岸顶的高差及实测路面积水深度，记录首次触发状态的时间。', [['standard', '常规阈值 · 车速低于 30 km/h，积水至少 15 cm'], ['early', '提前提示 · 车速低于 35 km/h，积水至少 10 cm']]],
+    ['现场验收与更新', '处置现场复核记录', '现场复核发现 C-01 的安装台账仍缺朝向。对照末帧低洼段水深，选择登记待办或补录摄像机朝向并更新版本。', [['inspect', '保留现场验收记录和待办'], ['update', '补录朝向并发布修订版本']]],
+  ].map(([title, label, description, options], index) => ({
+    number: index + 1, title, label, description, options,
+  }));
+
+  const times = ['08:00', '08:01', '08:02'];
+  // Each entry is one minute of a synthetic field exercise. Road depths are
+  // separately observed on the low road, independent of the river gauge.
+  const samples = [
+    { forward: 24, reverse: 7, duplicate: 0, speed: 42, cameraForward: 23, cameraReverse: 6, riverLevel: 2.1, roadDepth: 0 },
+    { forward: 36, reverse: 10, duplicate: 8, speed: 32, cameraForward: 34, cameraReverse: 9, riverLevel: 2.8, roadDepth: 0 },
+    { forward: 42, reverse: 8, duplicate: 0, speed: 19, cameraForward: 40, cameraReverse: 8, riverLevel: 3.4, roadDepth: 18 },
+  ];
+  const bankCrest = 3.1;
+  function evidence(answers, minute) {
+    const row = samples[minute];
+    const both = answers[14] === 'both';
+    const rawCount = row.forward + (both ? row.reverse : 0) + row.duplicate;
+    const detectorCount = rawCount - (answers[15] === 'raw' ? 0 : row.duplicate);
+    const videoCount = row.cameraForward + (both ? row.cameraReverse : 0);
+    const lowQuality = minute === 1;
+    const useVideo = lowQuality && answers[16] === 'quality';
+    const early = answers[19] === 'early';
+    return {
+      ...row, route: answers[12] || 'a', bankCrest, rawCount, detectorCount, videoCount, lowQuality,
+      trafficCount: useVideo ? videoCount : detectorCount,
+      source: useVideo ? 'C-01' : 'D-01',
+      trafficStatus: row.speed < (early ? 35 : 30) ? '低速' : '正常',
+      waterStatus: row.roadDepth >= (early ? 10 : 15) ? '积水提示' : '正常',
+      overflow: row.riverLevel > bankCrest,
     };
-    return { route, wetRoad, countTracks: countTracks(minute), total,
-      source: [...new Set(chosen.map(item => item.source))].join('＋'),
-      ablation: sum(pair.map(item => choose(item, a(13) === 'drop-detector' ? 'video' : 'detector'))),
-      detectorCount: pair[minute - start].detector, beforeAfter, a };
   }
 
-  function result(number, answers, minute) {
-    const s = stateAt(answers, minute);
-    const option = s.a(number);
-    if (!option) return { headline: '等待应用', detail: '完成当前操作后，场景会显示结果。' };
-    const units = value => value === null ? '未知' : value + ' 辆';
+  // Simulated residuals at two held-out checkpoints. Uncorrected reference
+  // offsets are common to both checkpoints and remain visible after solving.
+  function checkAccuracy(answers) {
+    const gain = (answers[3] === 'cluster' ? 3 : 1) * (answers[6] === 'position' ? 4 : 1);
+    const raw = answers[2] === 'local';
+    const points = [[0.08, 0.06, 0.06], [-0.12, 0.09, -0.08]].map(([x,y,z]) => [
+      x * gain + (raw ? 3 : 0), y * gain + (raw ? 4 : 0), z * gain + (raw ? 0.8 : 0),
+    ]);
+    const rms = values => Math.sqrt(values.reduce((sum, value) => sum + value * value, 0) / values.length);
+    return { points, plane: rms(points.map(([x,y]) => Math.hypot(x,y))), height: rms(points.map(point => point[2])) };
+  }
+
+  function result(number, answers, minute = 0) {
+    const choice = answers[number - 1];
+    const entry = (headline, detail) => ({ headline, detail });
+    if (!choice) return entry('等待操作', '完成本步操作后可查看结果。');
+    const time = times[minute];
+    const s = evidence(answers, minute);
+    const accuracy = checkAccuracy(answers);
+    const routeLabel = s.route === 'b' ? '云桥路 B 断面' : '临江大道 A 断面';
+    const scope = answers[0] === 'manual' ? '手动圈选区域' : answers[0] === 'block' ? '完整街区' : '滨水测区';
     switch (number) {
-      case 1: return { headline: option === 'extended' ? '480 × 410 m' : '400 × 350 m', detail: '已显示工程边界和地面参考网格。' };
-      case 2: return { headline: option === 'all' ? '完整路网已加载' : '主干道已加载', detail: '场景显示道路面、车道标线与中心交叉口。' };
-      case 3: return { headline: '建筑模型已加入', detail: '立面、窗户、屋顶和街道形成可旋转的三维街区。' };
-      case 4: return { headline: '地面与绿化已加入', detail: '出现绿化、公园步道、街区地面和道路边界。' };
-      case 5: return { headline: option === 'corrected' ? '已校正到参考点' : '产生 33.5 m 偏差', detail: '查看原始坐标和校核点之间的虚线。' };
-      case 6: return { headline: 'D-01 → ' + roads[s.route].label, detail: '设备位置不变，观测关联线和道路目标随配置更新。' };
-      case 7: return { headline: option === 'speed' ? speeds[minute] + ' km/h' : detector[minute] + ' 辆/分', detail: '路网中已生成行驶车辆。切换时间，对比车流密度与速度。' };
-      case 8: return { headline: option === 'speed' ? '字段单位不相符' : '车辆计数字段已绑定', detail: option === 'speed' ? 'km/h 不能作为车辆数，后续检测器计数会标记未知。' : 'D-01 的 veh_count 已映射到路段车辆数。' };
-      case 9: return { headline: units(s.detectorCount), detail: minute === 1 ? (option === 'raw' ? '08:01 重复观测造成 11 辆偏差。' : '08:01 已剔除重复行，低质量标记继续保留。') : '切换到 08:01 可比较重复记录造成的偏差。' };
-      case 10: return { headline: s.countTracks + ' 辆过线', detail: '样例轨迹与计数线按所选方向匹配。' };
-      case 11: return { headline: option + ' 分钟统计窗口', detail: '按窗口起点把检测器和样例视频记录配对。' };
-      case 12: return { headline: units(s.total), detail: '参与统计的实际来源：' + s.source + '。' };
-      case 13: return { headline: units(s.ablation), detail: '对照原融合结果 ' + units(s.total) + '，查看保留来源。' };
-      case 14: return { headline: 'W-01 → ' + roads[s.wetRoad].label, detail: '地图显示新增水位计及其绑定道路。' };
-      case 15: case 16: case 17: case 18: case 19: case 20: {
-        const focus = ({ 15: 'smoke', 16: 'speed', 17: 'water' })[number] || s.a(number) && (number === 19 ? option : s.a(18)) || 'water';
-        const evidence = s.beforeAfter(focus);
-        return { headline: evidence.status, detail: evidence.value + '。' +
-          ({ 18: '当前显示缺测影响。', 19: '已定位核验对象。', 20: option === 'before' ? '正在回看扰动前结果。' : '正在查看扰动后结果。' }[number] || '') };
+      case 1: return entry(scope + '已划定', choice === 'river' ? '调查以岸线、低洼路段和邻近交叉口为重点。' : '调查以路口、沿街建筑和相邻滨水边缘为重点。');
+      case 2: return choice === 'full' ? entry('基础与历史资料已登记', '已将底图、路网及高程资料纳入' + scope + '，并保留历史汛情对照记录。') : entry('三份基础资料已登记', '已将 CAD 总平面图、交通网络图和数字高程模型纳入' + scope + '工程资料清单。');
+      case 3: return choice === 'transform' ? entry('坐标转换已完成', '教学场景已记录坐标与高程统一结果。') : entry('平面错位 5.00 m', '原始资料还存在 0.80 m 高程偏差，检查点验算将保留这项误差。');
+      case 4: if (choice === 'field') return entry('已生成外业测量记录表', '已测量 3 个控制点和 3 个检查点。检查点单独留作核验。');
+        return entry(choice === 'spread' ? '控制点分布于测区两端' : '控制点集中于一侧', '两处独立检查点均不参与解算。' + (choice === 'spread' ? '两端均有邻近控制点。' : '远端检查点位于控制点包围范围之外。'));
+      case 5: return choice === 'grid' ? entry('平行航带已采集', '垂直影像可用于地面拼接，转角立面需要额外视角。') : entry('交叉航带已采集', '垂直与倾斜影像共同覆盖街区，可比对同一建筑的多个立面。');
+      case 6: if (choice === 'all') return entry('测区内待核查区域已补采并验收', '已核对所选测区内的补拍影像。');
+        return entry(choice === 'bank' ? '岸脚补采完成' : '建筑转角补采完成', choice === 'bank' ? '增加岸脚斜向影像，建筑转角仍需检查原航带覆盖。' : '增加楼角侧向影像，岸脚仍需检查原航带覆盖。');
+      case 7: return entry(choice === 'control' ? '控制点已参与定位' : '已按机载初值定位', '独立检查点平面均方根误差为 ' + accuracy.plane.toFixed(2) + ' m，可在精度检查时对照限差。');
+      case 8: return entry(choice === 'surface' ? '已打开三维纹理网格' : '已打开正射底图', '网格和底图共享工程参考系；本次补采集中在' + (answers[5] === 'all' ? '已划定测区内发现覆盖或影像质量问题的位置。' : answers[5] === 'corner' ? '建筑转角。' : '护岸岸脚。'));
+      case 9: {
+        const plane = choice === 'plane';
+        const value = plane ? accuracy.plane : accuracy.height;
+        const limit = plane ? 0.30 : 0.20;
+        return entry((plane ? '平面' : '高程') + ' RMSE ' + value.toFixed(2) + ' m', '两处独立检查点，教学限差 ' + limit.toFixed(2) + ' m。' + (value <= limit ? '本项通过。' : '本项超限，需复核坐标、控制点分布和定位约束。'));
       }
-      default: return { headline: '已应用', detail: '' };
+      case 10: return choice === 'transport' ? entry('已核对道路与建筑档案', '道路断面记录通行方向，建筑记录轮廓与高度，设备可沿对象编号关联。') : entry('已核对河段与低洼区档案', '河段记录岸顶高程 3.10 m，低洼路段单独记录路面积水深度。');
+      case 11: {
+        const passed = answers[8] === 'height' ? accuracy.height <= 0.20 : accuracy.plane <= 0.30;
+        return entry((choice === 'survey' ? '测绘核查视图' : '运行监测视图') + ' · v1', (choice === 'survey' ? '默认查看底图和控制点。' : '默认查看道路和河段对象。') + (passed ? '所验指标通过，核验记录随场景保存。' : '所验指标超限，发布记录标记为待复测。'));
+      }
+      case 12: return entry(choice === 'field' ? '三台设备已按复测点定位' : '三台设备已按底图初定位', (choice === 'field' ? '采用现场安装点复测记录。' : '安装点来自图上量取，精度标记为初测。') + 'D-01 和 C-01 位于道路断面附近，W-01 位于河岸。');
+      case 13: return entry('D-01、C-01 → ' + routeLabel, '已将两路交通观测关联到同一断面；W-01 仍直接观测河段水面。');
+      case 14: return entry(time + (choice === 'live' ? ' · 模拟接入' : ' · 归档批次'), 'D-01 正向原始汇总 ' + (s.forward + s.duplicate) + ' 辆、速度 ' + s.speed + ' km/h；C-01 提供双向轨迹；W-01 河面高程 ' + s.riverLevel.toFixed(2) + ' m。');
+      case 15: return entry(time + ' · ' + s.videoCount + ' 辆过线', '正向 ' + s.cameraForward + ' 辆，反向 ' + s.cameraReverse + ' 辆。本次' + (choice === 'both' ? '合并两个方向。' : '采用正向计数。'));
+      case 16: return entry(time + ' · 检测器 ' + s.detectorCount + ' 辆', '同窗视频 ' + s.videoCount + ' 辆。' + (s.duplicate ? (choice === 'clean' ? '已剔除重复的 8 辆；' : '保留重复的 8 辆；') + '该窗检测器带低质量标记。' : '当前窗口无重复记录；08:01 可检验两种处理的差异。'));
+      case 17: return entry(time + ' · ' + s.trafficCount + ' 辆/分', '采用 ' + s.source + '。' + (s.lowQuality ? (choice === 'quality' ? '检测器质量较低，改用同向视频计数。' : '按固定策略保留低质量检测器读数。') : '检测器质量正常。') + ' W-01 水位独立保留。');
+      case 18: return entry(choice === 'traffic' ? routeLabel + ' · ' + s.trafficCount + ' 辆/分' : '河段 · ' + s.riverLevel.toFixed(2) + ' m', choice === 'traffic' ? '计数来源 ' + s.source + '，D-01 提供平均速度 ' + s.speed + ' km/h。' : 'W-01 提供河面高程；同期低洼路段现场样本为 ' + s.roadDepth + ' cm。');
+      case 19: return entry(choice === 'combined' ? time + ' · 车流与河面' : time + ' · 河岸近景', (choice === 'combined' ? '道路车流 ' + s.trafficCount + ' 辆/分，平均 ' + s.speed + ' km/h。' : '') + '河面 ' + s.riverLevel.toFixed(2) + ' m，' + (s.overflow ? '高于样例岸顶，低洼段同期见水 18 cm。' : '低于样例岸顶，低洼段现场未见积水。'));
+      case 20: return entry(time + ' · ' + s.trafficStatus + ' / ' + s.waterStatus, '按所选阈值，回放中首次低速为 ' + (choice === 'early' ? '08:01' : '08:02') + '，首次积水提示为 08:02。当前车速 ' + s.speed + ' km/h，实测积水 ' + s.roadDepth + ' cm。');
+      case 21: return entry(choice === 'inspect' ? 'v1 · 已登记待办' : 'v2 · 已更新设备台账', '末帧低洼路段回放值与现场样本均为 18 cm。' + (choice === 'inspect' ? '保留 C-01 朝向待补录事项。' : '按现场照片将 C-01 朝向补录为面向正向来车，保留 v1 供复查。'));
+      default: return entry('等待操作', '');
     }
   }
 
-  function visual(answers, minute) {
-    const n = answers.length, s = stateAt(answers, minute);
-    const layers = [], lines = [], markers = [];
-    const addLine = (points, color, width, dashed = false) => lines.push({ points, color, width, dashed });
-    const mark = (point, text, color, id, offset) => markers.push({ point, text, color, id, offset });
-    const drawRoad = (road, label, color) => {
-      addLine(roads[road].points, color, 5);
-      mark(roads[road].marker, label, color, road);
-    };
-    if (n >= 1) {
-      if (n < 4) layers.push('grid');
-      const [x, z] = s.a(1) === 'extended' ? [240, 205] : [200, 175];
-      addLine([[-x, 0, -z], [x, 0, -z], [x, 0, z], [-x, 0, z], [-x, 0, -z]], '#6d8b7acf', 1.5, true);
-      if (n === 1) mark([-x, 0, z], '调查范围', '#258e67');
-    }
-    if (n >= 2) {
-      layers.push('roads-main');
-      if (s.a(2) === 'all') layers.push('roads-side');
-      if (n === 2) mark([0, 5, 0], '中心交叉口', '#47c497');
-    }
-    if (n >= 3) {
-      layers.push('buildings');
-      if (n === 3) mark([70, 28, -43], '样例建筑 B-01', '#3bc49a');
-    }
-    if (n >= 4) {
-      layers.push('land', 'greenery');
-      if (n === 4) mark([-67, 8, -55], '街区公园与步道', '#56c98a');
-    }
-    const reference = [-55, 1, -20], raw = [-25, 1, -5];
-    const sensor = s.a(5) === 'corrected' ? reference : raw;
-    if (n === 5) {
-      addLine([raw, reference], '#f9c56c', 2, true);
-      mark(reference, '校核点', '#47c99b');
-      mark(raw, s.a(5) === 'corrected' ? '原始位置' : '未校正位置 · 33.5 m', '#f6ab63');
-    }
-    if (n >= 6) {
-      addLine([sensor, roads[s.route].marker], '#aeffdd', 2, true);
-      mark([sensor[0], 12, sensor[2]], 'D-01', '#54dea7', s.route, 13);
-      if (n <= 13) drawRoad(s.route, n === 6 ? '已关联' :
-        n === 7 ? result(n, answers, minute).headline :
-        n === 8 ? result(n, answers, minute).headline :
-        n === 9 ? '清洗后 ' + result(n, answers, minute).headline :
-        n === 10 ? '视频 ' + result(n, answers, minute).headline :
-        n === 11 ? s.a(11) + ' 分钟窗' :
-        n === 12 ? '融合 ' + result(n, answers, minute).headline :
-        '移除一路 ' + result(n, answers, minute).headline, n === 8 && s.a(8) === 'speed' ? '#f1a258' : '#46d4a5');
-    }
-    if (n === 10) {
-      const at = s.route === 'a' ? [-56, 3, 12] : [12, 3, -56];
-      mark(at, s.a(10) === 'reverse' ? '反向计数线' : '正向计数线', '#ffca72');
-    }
-    if (n >= 14) {
-      const sensorWater = [22, 12, -38];
-      addLine([sensorWater, roads[s.wetRoad].marker], '#9edbff', 2, true);
-      mark(sensorWater, 'W-01', '#67bfe9', s.wetRoad, 12);
-    }
-    if (n >= 15) {
-      const finding = s.beforeAfter('smoke');
-      mark([69, 36, -47], 'B-01 · ' + finding.status, finding.color, 'smoke');
-    }
-    if (n >= 16) {
-      const finding = s.beforeAfter('speed');
-      drawRoad(s.route, finding.status + ' · ' + finding.value, finding.color);
-    }
-    if (n >= 17) {
-      const finding = s.beforeAfter('water');
-      const point = [...roads[s.wetRoad].marker];
-      point[1] += 7;
-      addLine(roads[s.wetRoad].points, finding.color, finding.status === '积水' ? 12 : 6, finding.status === '未知');
-      mark(point, finding.status + ' · ' + finding.value, finding.color, 'water', 13);
-    }
-    if (n >= 18) {
-      const focus = s.a(19) || s.a(18);
-      const point = focus === 'smoke' ? [69, 58, -47] : focus === 'water' ? [...roads[s.wetRoad].marker] : [...roads[s.route].marker];
-      point[1] += 34;
-      mark(point, n === 18 ? '已注入缺测' : n === 19 ? '核验对象' : s.a(20) === 'before' ? '扰动前' : '扰动后', '#ffd28f', focus);
-    }
-    const activeRoad = s.route;
-    const otherRoad = activeRoad === 'a' ? 'b' : 'a';
-    const windowSize = Number(s.a(11) || 1);
-    const appliedCount = n === 10 ? s.countTracks
-      : n === 13 ? s.ablation === null ? null : Math.round(s.ablation / windowSize)
-      : n >= 12 ? s.total === null ? null : Math.round(s.total / windowSize)
-      : n >= 8 ? s.detectorCount : detector[minute];
-    const speedState = s.beforeAfter('speed');
-    const waterState = s.beforeAfter('water');
-    const physicallyWet = n >= 17 && waterState.status === '积水';
-    const traffic = n < 7 ? {} : {
-      [activeRoad]: {
-        count: appliedCount === null ? 0 : Math.min(24, Math.round(appliedCount * .57)),
-        speed: n >= 16 && speedState.status === '拥堵' ? 12 : speeds[minute],
-        direction: n === 10 ? s.a(10) === 'reverse' ? -1 : 1 : undefined,
-      },
-      [otherRoad]: { count: [7, 11, 8][minute], speed: [29, 34, 36][minute] },
-    };
-    if (physicallyWet && traffic[s.wetRoad]) traffic[s.wetRoad].speed = Math.min(traffic[s.wetRoad].speed, 15);
-
-    const packets = [];
-    const from = [sensor[0], 5, sensor[2]];
-    const to = [roads[activeRoad].marker[0], 1.1, roads[activeRoad].marker[2]];
-    const camera = activeRoad === 'a' ? [-59, 6, -9] : [9, 6, -59];
-    if (n >= 6 && n <= 14 && n !== 10 && !(n === 12 && s.a(12) === 'video') && !(n === 13 && s.a(13) === 'drop-detector')) {
-      const rejected = n === 8 && s.a(8) === 'speed' || n === 9 && s.a(9) === 'dedup' && minute === 1;
-      packets.push({ from, to, count: rejected ? 3 : n === 9 && s.a(9) === 'raw' ? 9 : 6, color: rejected ? '#f5ac65' : '#a1ffdd' });
-    }
-    if (n >= 10 && n <= 13 && !(n === 12 && s.a(12) === 'detector') && !(n === 13 && s.a(13) === 'drop-video')) {
-      packets.push({ from: camera, to, count: 6, color: '#ffc67d' });
-    }
-    if (n >= 14 && !(n >= 18 && s.a(18) === 'water' && s.a(20) !== 'before')) {
-      const waterPoint = roads[s.wetRoad].marker;
-      packets.push({ from: [15, 3.8, -37], to: [waterPoint[0], 1, waterPoint[2]], count: 4, color: '#83d5ff' });
-    }
-    return {
-      layers, lines, markers, stage: n,
-      simulation: {
-        stage: n, route: activeRoad, sensor, traffic, packetPaths: packets,
-        water: { road: s.wetRoad, depth: physicallyWet ? water[minute] : 0 },
-        smoke: n >= 15 && s.beforeAfter('smoke').status === '火警候选',
-      },
-    };
+  function visual(answers, minute = 0) {
+    return { stage: answers.length, answers: [...answers], minute, draft: false, draftStep: null, accuracy: checkAccuracy(answers), ...evidence(answers, minute) };
   }
 
-  function previewVisual(applied, candidate, minute) {
-    const current = visual(applied, minute);
-    const next = visual(candidate, minute);
-    const key = JSON.stringify;
-    const flagChanges = (before, after) => {
-      const existing = new Set(before.map(key));
-      return after.map(item => !existing.has(key(item)));
-    };
-    const color = '#f3979c';
-    const changedLines = flagChanges(current.lines, next.lines);
-    const changedMarkers = flagChanges(current.markers, next.markers);
-    const draftLayers = next.layers.filter(layer => !current.layers.includes(layer));
-    if (!changedMarkers.some(Boolean) && next.markers.length) changedMarkers[changedMarkers.length - 1] = true;
-    return {
-      ...next,
-      draftLayers,
-      lines: next.lines.map((line, index) => changedLines[index] ? { ...line, color } : line),
-      markers: next.markers.map((marker, index) => changedMarkers[index] ? { ...marker, color, draft: true } : marker),
-      simulation: {
-        ...next.simulation,
-        draft: {
-          color,
-          traffic: ['a', 'b'].filter(road => key(current.simulation.traffic[road]) !== key(next.simulation.traffic[road])),
-          paths: flagChanges(current.simulation.packetPaths, next.simulation.packetPaths),
-          signal: current.stage < 2 && next.stage >= 2,
-          detector: next.stage >= 5 && (current.stage < 5 || key(current.simulation.sensor) !== key(next.simulation.sensor)),
-          video: next.stage >= 10 && (current.stage < 10 || current.simulation.route !== next.simulation.route),
-          gauge: current.stage < 14 && next.stage >= 14,
-          water: key(current.simulation.water) !== key(next.simulation.water),
-          smoke: current.simulation.smoke !== next.simulation.smoke,
-        },
-      },
-    };
+  function previewVisual(applied, candidate, minute = 0) {
+    const changedIndex = candidate.findIndex((answer, index) => applied[index] !== answer);
+    return { ...visual(candidate, minute), draft: true, draftStep: changedIndex === -1 ? candidate.length : changedIndex + 1 };
   }
 
-  return { modules, steps, times, result, visual, previewVisual };
+  return { modules, steps, times, purposes, materials, importedMaterials, referenceInputs, referenceTasks, alignLakeReference, surveyKinds, surveyLimit, surveyPointsInBounds, surveyRows, flightParameters, normalizeFlightSettings, planSurveyFlight, coverageSites, coverageCasesForBounds, result, visual, previewVisual };
 })();

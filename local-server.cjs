@@ -1,16 +1,24 @@
 'use strict';
 const { createServer } = require('node:http');
 const { createHash, randomBytes } = require('node:crypto');
-const { readFileSync, writeFileSync, mkdirSync, renameSync } = require('node:fs');
+const { createReadStream, statSync, readFileSync, writeFileSync, mkdirSync, renameSync } = require('node:fs');
+const { pipeline } = require('node:stream/promises');
 const { homedir, platform } = require('node:os');
 const path = require('node:path');
-const { LabError, createClient, createAttempt, saveProgress, buildResult } = require('./scripts/ilab.cjs');
+const { LabError, createClient, createAttempt, currentAttempt, saveProgress, buildResult } = require('./scripts/ilab.cjs');
 
 const cookie = 'city_ilab';
 const sessionSeconds = 7 * 24 * 3600;
 const fileLimit = 5 * 1024 * 1024;
-const staticFiles = new Set(['index.html', 'lab.js', 'lab.css', 'city-view.js', 'city-simulation.js', 'experiment.js']);
-const fileTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.webp': 'image/webp' };
+const staticFiles = new Set([
+  'index.html', 'lab.js', 'lab.css', 'survey-work.js', 'survey-work.css', 'monitoring-work.js',
+  'scope.js', 'engineering-maps.js', 'source-materials.js', 'reference-work.js', 'field-survey.js', 'coverage-work.js', 'survey-plan.js', 'survey-map.js', 'survey-map.css', 'fieldwork.js', 'fieldwork.css', 'city-view.js', 'city-simulation.js', 'experiment.js',
+]);
+const fileTypes = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.mp4': 'video/mp4', '.webm': 'video/webm',
+};
 
 function defaultStateFile() {
   const home = homedir();
@@ -72,7 +80,7 @@ function cookies(req) {
 function summary(attempt) {
   const { draft, originId, submission, report } = attempt;
   return {
-    draft, originId, revision: attempt.revision || 0,
+    draft, originId, curriculumVersion: attempt.curriculumVersion, revision: attempt.revision || 0,
     submission: submission ? { status: submission.status, receipt: submission.receipt } : null,
     report: report ? { receipt: report.receipt } : null,
   };
@@ -102,7 +110,8 @@ function createApp({ client, stateFile = defaultStateFile(), title = process.env
     }
     const auth = await client.exchange(ticket);
     const key = client.appid + ':' + auth.un;
-    const student = state.students[key] ||= { key, username: auth.un, attempts: [createAttempt()] };
+    const student = state.students[key] ||= { key, username: auth.un, attempts: [] };
+    currentAttempt(student.attempts);
     if (student.credentials?.original !== auth.access_token) {
       student.credentials = { original: auth.access_token, current: auth.access_token, expiresAt: auth.expires_time, count: 0 };
     }
@@ -217,11 +226,16 @@ function createApp({ client, stateFile = defaultStateFile(), title = process.env
 
   async function handleApi(req, res, url) {
     const student = studentFor(req);
+    let attempt;
+    if (student) {
+      const previous = student.attempts.at(-1);
+      attempt = currentAttempt(student.attempts);
+      if (attempt !== previous) store.save();
+    }
     if (req.method === 'GET' && url.pathname === '/api/ilab/session') {
-      return json(res, 200, { connected: Boolean(student), attempt: student ? summary(student.attempts.at(-1)) : null });
+      return json(res, 200, { connected: Boolean(student), attempt: attempt ? summary(attempt) : null });
     }
     if (!student) throw new LabError('请通过实验空间的「我要做实验」进入。', 401);
-    const attempt = student.attempts.at(-1);
     if (url.searchParams.get('originId') !== attempt.originId) throw new LabError('本页实验记录已变更，请刷新页面。', 409);
     if (req.method === 'GET' && url.pathname === '/api/ilab/result') {
       const existing = await exclusive(student, () => lookup(student, attempt));
@@ -278,18 +292,37 @@ function createApp({ client, stateFile = defaultStateFile(), title = process.env
         return await enter(res, url);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') throw new LabError('请求方式不受支持。', 405);
-      let name = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
-      if (!staticFiles.has(name) && (!name.startsWith('assets/') || !fileTypes[path.extname(name)])) {
-        throw new LabError('找不到网页。', 404);
-      }
+      const name = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
+      const ext = path.extname(name).toLowerCase();
+      const directory = name.split('/')[0];
       const file = path.resolve(__dirname, name);
-      if (!staticFiles.has(name) && !file.startsWith(path.join(__dirname, 'assets') + path.sep)) {
-        throw new LabError('找不到网页。', 404);
+      const asset = ['assets', 'videos'].includes(directory) && file.startsWith(path.join(__dirname, directory) + path.sep);
+      if (!staticFiles.has(name) && !(asset && Object.hasOwn(fileTypes, ext))) throw new LabError('找不到网页。', 404);
+      const info = statSync(file);
+      if (!info.isFile()) throw new LabError('找不到网页。', 404);
+      const headers = { 'Content-Type': fileTypes[ext], 'Cache-Control': 'no-store', 'Content-Length': info.size };
+      const media = fileTypes[ext].startsWith('video/');
+      if (media) headers['Accept-Ranges'] = 'bytes';
+      let slice;
+      if (media && req.headers.range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+        if (match && (match[1] || match[2])) {
+          const start = match[1] ? Number(match[1]) : Math.max(0, info.size - Number(match[2]));
+          const end = match[1] && match[2] ? Math.min(Number(match[2]), info.size - 1) : info.size - 1;
+          if (start <= end) slice = { start, end };
+        }
+        if (!slice) {
+          res.writeHead(416, { 'Content-Range': 'bytes */' + info.size });
+          return res.end();
+        }
+        headers['Content-Range'] = 'bytes ' + slice.start + '-' + slice.end + '/' + info.size;
+        headers['Content-Length'] = slice.end - slice.start + 1;
       }
-      const contents = readFileSync(file);
-      res.writeHead(200, { 'Content-Type': fileTypes[path.extname(name)], 'Cache-Control': 'no-store' });
-      res.end(req.method === 'HEAD' ? undefined : contents);
+      res.writeHead(slice ? 206 : 200, headers);
+      if (req.method === 'HEAD') return res.end();
+      await pipeline(createReadStream(file, slice), res);
     } catch (error) {
+      if (res.headersSent || res.destroyed) return res.destroy();
       const known = error instanceof LabError;
       const status = known ? error.status : error.code === 'ENOENT' ? 404 : 500;
       const message = known ? error.message : status === 404 ? '找不到网页。' : '本地服务处理失败。';
